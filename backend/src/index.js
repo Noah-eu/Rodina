@@ -119,6 +119,16 @@ io.on('connection', (socket) => {
   socket.on('call', (callInfo) => {
     io.emit('incoming_call', callInfo);
   });
+  // WebRTC signaling proxy
+  socket.on('webrtc_offer', (data)=>{
+    socket.broadcast.emit('webrtc_offer', data)
+  })
+  socket.on('webrtc_answer', (data)=>{
+    socket.broadcast.emit('webrtc_answer', data)
+  })
+  socket.on('webrtc_ice', (data)=>{
+    socket.broadcast.emit('webrtc_ice', data)
+  })
 });
 
 const PORT = process.env.PORT || 3001;
