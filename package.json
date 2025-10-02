@@ -6,7 +6,8 @@
     "build:frontend": "cd frontend && npm run build",
     "build:backend": "cd backend && npm run build || true",
     "build:all": "npm run build:frontend && npm run build:backend",
-    "dev": "concurrently \"cd backend && npm run dev\" \"cd frontend && npm run dev\""
+    "dev": "concurrently \"cd backend && npm run dev\" \"cd frontend && npm run dev\"",
+    "e2e": "npx playwright test"
   },
   "devDependencies": {
     "concurrently": "^8.0.1",
