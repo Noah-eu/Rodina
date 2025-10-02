@@ -1,0 +1,14 @@
+{
+  "name": "famcall-root",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build:frontend": "cd frontend && npm run build",
+    "build:backend": "cd backend && npm run build || true",
+    "build:all": "npm run build:frontend && npm run build:backend",
+    "dev": "concurrently \"cd backend && npm run dev\" \"cd frontend && npm run dev\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.0.1"
+  }
+}
