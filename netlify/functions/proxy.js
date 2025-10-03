@@ -1,12 +1,25 @@
 exports.handler = async function(event) {
   // Základní proxy z Netlify Functions na náš backend server
-  // Prefer BACKEND_URL, fallback VITE_API_URL, jinak localhost
-  const API = process.env.BACKEND_URL || process.env.VITE_API_URL || 'http://localhost:3001'
-  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(API)) {
+  // Vyžadujeme BACKEND_URL. Nepoužíváme VITE_API_URL (mohlo by vést k rekurzi přes functions).
+  const API = process.env.BACKEND_URL
+  if (!API) {
     return {
       statusCode: 500,
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ error: 'BACKEND_URL not configured', hint: 'Set Netlify env BACKEND_URL to your public backend URL (e.g., https://your-backend.onrender.com)' })
+      body: JSON.stringify({
+        error: 'BACKEND_URL not configured',
+        hint: 'Set Netlify env BACKEND_URL to your public backend URL (e.g., https://rodina.onrender.com) and redeploy.'
+      })
+    }
+  }
+  if (/\.netlify\/functions/.test(API)) {
+    return {
+      statusCode: 500,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        error: 'Invalid BACKEND_URL: points to Netlify Functions',
+        hint: 'BACKEND_URL must point to external backend (e.g., Render), not another Netlify function.'
+      })
     }
   }
   let path = event.path.replace('/.netlify/functions/proxy', '')
