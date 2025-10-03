@@ -37,7 +37,8 @@ exports.handler = async function(event) {
   const body = event.body ? (isBase64 ? Buffer.from(event.body, 'base64') : event.body) : undefined
   try{
     const res = await fetch(url, { method, headers, body })
-    const buf = await res.buffer()
+    const ab = await res.arrayBuffer()
+    const buf = Buffer.from(ab)
     const contentType = res.headers.get('content-type') || 'application/octet-stream'
     return {
       statusCode: res.status,
