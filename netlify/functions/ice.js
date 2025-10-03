@@ -1,5 +1,3 @@
-const fetch = require('node-fetch')
-
 exports.handler = async function(event) {
   try{
     const channel = (process.env.XIRSYS_CHANNEL || 'rodina')
@@ -14,8 +12,8 @@ exports.handler = async function(event) {
     else if (username && secret) headers['Authorization'] = 'Basic ' + Buffer.from(`${username}:${secret}`).toString('base64')
     else return { statusCode: 500, body: JSON.stringify({ error: 'Missing Xirsys credentials in Netlify env' }) }
 
-    const resp = await fetch(url, { headers })
-    const json = await resp.json().catch(()=>({}))
+  const resp = await fetch(url, { headers })
+  const json = await resp.json().catch(()=>({}))
     if(!resp.ok){
       return { statusCode: resp.status, body: JSON.stringify({ error: 'Xirsys request failed', details: json }) }
     }

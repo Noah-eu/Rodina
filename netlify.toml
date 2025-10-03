@@ -3,6 +3,9 @@
   command = "NPM_CONFIG_PRODUCTION=false npm --prefix frontend ci && npm --prefix backend ci || true && npm run build:all"
   publish = "frontend/dist"
 
+[functions]
+  directory = "netlify/functions"
+
 [build.environment]
   # Ensure devDependencies (like vite) are installed during build
   NPM_CONFIG_PRODUCTION = "false"
