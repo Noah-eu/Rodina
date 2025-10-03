@@ -8,6 +8,8 @@ const cors = require('cors');
 const bcrypt = require('bcrypt');
 const fs = require('fs');
 const path = require('path');
+// Also try loading .env from repo root (two levels up) when running from backend folder
+try { require('dotenv').config({ path: path.resolve(__dirname, '..', '..', '.env') }); } catch (e) {}
 const multer = require('multer');
 const https = require('https');
 const { URL } = require('url');
