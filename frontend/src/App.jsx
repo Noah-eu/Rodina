@@ -69,6 +69,23 @@ export default function App(){
   useEffect(()=>{ if(remoteVideoRef.current && remoteStream) remoteVideoRef.current.srcObject = remoteStream }, [remoteStream])
   useEffect(()=>{ if(localVideoRef.current && localStream) localVideoRef.current.srcObject = localStream }, [localStream])
 
+  // Polling fallback if realtime (Pusher) isn't configured server-side
+  useEffect(()=>{
+    if(channel) return
+    if(!user) return
+    const pu = setInterval(()=>{ fetchUsers().catch(()=>{}) }, 5000)
+    const poll = async ()=>{
+      if(!selected) return
+      try{
+        const qs = `?me=${encodeURIComponent(user.id)}&peer=${encodeURIComponent(selected.id)}&limit=200`
+        const res = await fetch(api('/api/messages')+qs)
+        if(res.ok){ const list = await res.json(); setMessages(list) }
+      }catch(_){ }
+    }
+    const pm = setInterval(poll, 2000)
+    return ()=>{ clearInterval(pu); clearInterval(pm) }
+  }, [user, selected?.id])
+
   async function fetchUsers(){
     const res = await axios.get(api('/api/users'))
     setUsers(res.data)
@@ -88,6 +105,11 @@ export default function App(){
   async function send(){
     if(!user) return alert('Přihlašte se')
     if(!selected) return alert('Vyberte příjemce v seznamu vlevo')
+    if (recording && recorder){
+      // Stop a odešle se v onstop handleru
+      stopVoice()
+      return
+    }
     if (file){
       const form = new FormData()
       form.append('from', user.id)
@@ -115,8 +137,11 @@ export default function App(){
         const blob = new Blob(chunks, { type: 'audio/webm' })
         const form = new FormData()
         form.append('from', user.id)
+        if (selected?.id) form.append('to', selected.id)
         form.append('file', blob, 'voice.webm')
-        await fetch(api('/api/message'), { method: 'POST', body: form })
+        const resp = await fetch(api('/api/message'), { method: 'POST', body: form })
+        const sent = await resp.json().catch(()=>null)
+        if(sent?.id){ setMessages(m=> [...m, { ...sent, delivered: true }]) }
         stream.getTracks().forEach(t=>t.stop())
       }
       rec.start()
@@ -130,7 +155,7 @@ export default function App(){
     if(!user || !selected) return
     if(!typing) return
     const payload = { from: user.id, to: selected.id }
-    fetch('/.netlify/functions/proxy/api/rt/typing', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) })
+    fetch(api('/api/rt/typing'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) })
     const t = setTimeout(()=> setTyping(false), 800)
     return ()=> clearTimeout(t)
   }, [typing])

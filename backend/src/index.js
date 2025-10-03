@@ -79,7 +79,7 @@ function broadcast(event, payload){
 }
 
 // Web Push (VAPID)
-const vapidPath = path.join(__dirname, '..', 'vapid.json');
+const vapidPath = path.join(dataDir, 'vapid.json');
 function ensureVapid(){
   let pub = process.env.VAPID_PUBLIC_KEY;
   let priv = process.env.VAPID_PRIVATE_KEY;
@@ -300,7 +300,7 @@ app.post('/api/call', async (req, res)=>{
 // Web Push: get VAPID public key and subscribe
 app.get('/api/push/publicKey', (req, res)=>{
   try{
-    const saved = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'vapid.json'), 'utf8'));
+    const saved = JSON.parse(fs.readFileSync(vapidPath, 'utf8'));
     return res.json({ publicKey: saved.publicKey })
   }catch(e){ return res.status(404).json({ error: 'No VAPID key' }) }
 })
