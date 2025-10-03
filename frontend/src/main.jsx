@@ -15,7 +15,8 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js')
     .then(async (reg)=>{
       console.log('SW registered')
-      await initPush(reg, '')
+      const apiBase = import.meta.env.PROD ? '/.netlify/functions/proxy' : (import.meta.env.VITE_API_URL || 'http://localhost:3001')
+      await initPush(reg, apiBase)
     })
     .catch(()=>{})
 }

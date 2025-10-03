@@ -6,11 +6,12 @@ import { createPeerConnection } from './webrtc'
 
 const isProd = import.meta.env.PROD
 const DEV_API = import.meta.env.VITE_API_URL || 'http://localhost:3001'
-const api = (path) => `${isProd ? '' : DEV_API}${path}`
+const API_BASE = isProd ? '/.netlify/functions/proxy' : DEV_API
+const api = (path) => `${API_BASE}${path}`
 const mediaUrl = (u) => {
   if (!u) return ''
   if (/^https?:\/\//.test(u)) return u
-  return isProd ? `/api${u}` : `${DEV_API}${u}`
+  return `${API_BASE}${u}`
 }
 // Socket.IO pouze v dev; v produkci používáme Pusher + REST signaling
 const socket = isProd ? { on: ()=>{}, emit: ()=>{} } : io(DEV_API)
