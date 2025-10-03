@@ -121,11 +121,16 @@ app.post('/api/register', upload.single('avatar'), async (req, res) => {
 });
 
 app.post('/api/login', async (req, res) => {
-  const { name, pin } = req.body;
-  if (!name || !pin) return res.status(400).json({ error: 'Neplatný vstup' });
+  const { id, name, pin } = req.body || {};
+  if ((!name && !id) || !pin) return res.status(400).json({ error: 'Neplatný vstup' });
   readDB();
-  const norm = String(name).trim().toLowerCase();
-  const user = dbData.users.find(u => (u.nameNorm || u.name?.toLowerCase?.()) === norm);
+  let user = null;
+  if (id) {
+    user = dbData.users.find(u => u.id === id);
+  } else {
+    const norm = String(name).trim().toLowerCase();
+    user = dbData.users.find(u => (u.nameNorm || u.name?.toLowerCase?.()) === norm);
+  }
   if (!user) return res.status(404).json({ error: 'Uživatel nenalezen' });
   const match = await bcrypt.compare(pin, user.pinHash);
   if (!match) return res.status(401).json({ error: 'Špatný PIN' });
@@ -278,6 +283,8 @@ app.get('/api/ice', async (req, res) => {
 app.post('/api/rt/offer', (req, res)=>{ const payload = req.body || {}; broadcast('webrtc_offer', payload); res.json({ ok: true }) })
 app.post('/api/rt/answer', (req, res)=>{ const payload = req.body || {}; broadcast('webrtc_answer', payload); res.json({ ok: true }) })
 app.post('/api/rt/ice', (req, res)=>{ const payload = req.body || {}; broadcast('webrtc_ice', payload); res.json({ ok: true }) })
+app.post('/api/rt/typing', (req, res)=>{ const payload = req.body || {}; broadcast('typing', payload); res.json({ ok: true }) })
+app.post('/api/rt/delivered', (req, res)=>{ const payload = req.body || {}; broadcast('delivered', payload); res.json({ ok: true }) })
 app.post('/api/call', async (req, res)=>{
   const info = req.body || {};
   broadcast('incoming_call', info);

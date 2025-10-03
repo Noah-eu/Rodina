@@ -36,6 +36,8 @@ export default function App(){
   const [incomingCall, setIncomingCall] = useState(null)
   const [inCall, setInCall] = useState(false)
   const [ringing, setRinging] = useState(false)
+  const [typing, setTyping] = useState(false)
+  const [peerTyping, setPeerTyping] = useState(false)
   const pcRef = React.useRef(null)
   const iceServersRef = React.useRef(null)
   const localVideoRef = React.useRef()
@@ -58,6 +60,8 @@ export default function App(){
       channel.bind('webrtc_offer', onOffer)
       channel.bind('webrtc_answer', ({sdp})=> pcRef.current?.setRemoteDescription(sdp))
       channel.bind('webrtc_ice', ({candidate})=> pcRef.current?.addIceCandidate(candidate).catch(()=>{}))
+      channel.bind('typing', ({ from, to })=>{ if(user && selected && to===user.id && from===selected.id){ setPeerTyping(true); setTimeout(()=>setPeerTyping(false), 1500) } })
+      channel.bind('delivered', ({ id })=>{ setMessages(m=> m.map(x=> x.id===id? { ...x, delivered: true }: x)) })
     }
   }, [])
 
@@ -70,6 +74,17 @@ export default function App(){
     setUsers(res.data)
   }
 
+  useEffect(()=>{
+    if(!user || !selected) return
+    ;(async ()=>{
+      try{
+        const qs = `?me=${encodeURIComponent(user.id)}&peer=${encodeURIComponent(selected.id)}&limit=200`
+        const res = await fetch(api('/api/messages')+qs)
+        if(res.ok){ const list = await res.json(); setMessages(list) }
+      }catch(_){ }
+    })()
+  }, [user, selected?.id])
+
   async function send(){
     if(!user) return alert('Přihlašte se')
     if(!selected) return alert('Vyberte příjemce v seznamu vlevo')
@@ -79,10 +94,13 @@ export default function App(){
       form.append('to', selected.id)
       form.append('file', file)
       if (text) form.append('text', text)
-      await fetch(api('/api/message'), { method: 'POST', body: form })
+      const resp = await fetch(api('/api/message'), { method: 'POST', body: form })
+      const sent = await resp.json().catch(()=>null)
+      if(sent?.id){ setMessages(m=> [...m, { ...sent, delivered: true }]) }
       setFile(null)
     } else {
-      await axios.post(api('/api/message'), { from: user.id, to: selected.id, text })
+      const { data: sent } = await axios.post(api('/api/message'), { from: user.id, to: selected.id, text })
+      if(sent?.id){ setMessages(m=> [...m, { ...sent, delivered: true }]) }
     }
     setText('')
   }
@@ -106,6 +124,16 @@ export default function App(){
     }catch(e){ alert('Mikrofon nedostupný: '+e.message) }
   }
   function stopVoice(){ if(recorder){ recorder.stop(); setRecording(false); setRecorder(null) } }
+
+  // Typing indicator
+  useEffect(()=>{
+    if(!user || !selected) return
+    if(!typing) return
+    const payload = { from: user.id, to: selected.id }
+    fetch('/.netlify/functions/proxy/api/rt/typing', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) })
+    const t = setTimeout(()=> setTyping(false), 800)
+    return ()=> clearTimeout(t)
+  }, [typing])
 
   async function startCall(type='video', toUserId=null){
     if(!user) return
@@ -212,6 +240,21 @@ export default function App(){
         </ul>
       </aside>
       <main className="chat">
+        {selected && (
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'8px 12px',borderBottom:'1px solid rgba(255,255,255,.08)'}}>
+            <div style={{display:'flex',alignItems:'center',gap:10}}>
+              <img src={(selected.avatar? mediaUrl(selected.avatar):'/assets/default-avatar.png')} alt="avatar" style={{width:36,height:36,borderRadius:18,objectFit:'cover'}}/>
+              <div>
+                <div style={{fontWeight:600}}>{selected.name}</div>
+                {peerTyping && <div style={{fontSize:12,opacity:.8}}>píše…</div>}
+              </div>
+            </div>
+            <div style={{display:'flex',gap:8}}>
+              <button onClick={()=>startCall('video', selected.id)}>🎥</button>
+              <button onClick={()=>startCall('audio', selected.id)}>📞</button>
+            </div>
+          </div>
+        )}
         {!!incomingCall && !inCall && (
           <div className="call-overlay">
             <div className="overlay-card">
@@ -241,7 +284,7 @@ export default function App(){
           ))}
         </div>
         <div className="composer">
-          <input value={text} onChange={e=>setText(e.target.value)} placeholder={selected?`Zpráva pro ${selected.name}…`:'Vyberte příjemce vlevo'} />
+          <input value={text} onChange={e=>{ setText(e.target.value); setTyping(true) }} placeholder={selected?`Zpráva pro ${selected.name}…`:'Vyberte příjemce vlevo'} />
           <input type="file" onChange={e=>setFile(e.target.files?.[0]||null)} />
           {!recording ? <button onClick={startVoice}>🎤 Hlasovka</button> : <button onClick={stopVoice}>⏹️ Stop</button>}
           <button onClick={send}>Odeslat</button>
@@ -272,13 +315,13 @@ function Auth({onAuth}){
     if (avatarRef.current?.files?.[0]) form.append('avatar', avatarRef.current.files[0])
     await fetch(api('/api/register'), { method: 'POST', body: form })
     const res = await fetch(api('/api/login'), { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name, pin })})
-    if(res.ok){ const user = await res.json(); localStorage.setItem('rodina:lastName', name); localStorage.setItem('rodina:lastStage','pin'); onAuth(user) }
+    if(res.ok){ const user = await res.json(); localStorage.setItem('rodina:lastName', name); localStorage.setItem('rodina:lastUserId', user.id); localStorage.setItem('rodina:lastStage','pin'); onAuth(user) }
   }
 
   if(stage==='login' || stage==='pin') return (
     <div className="auth">
       <h2>Přihlášení</h2>
-      <form onSubmit={async (e)=>{ e.preventDefault(); const payload = stage==='pin'? { name: localStorage.getItem('rodina:lastName')||name, pin }: { name, pin }; const res = await fetch(api('/api/login'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)}); if(res.ok){ const u = await res.json(); localStorage.setItem('rodina:lastName', payload.name); localStorage.setItem('rodina:lastStage','pin'); onAuth(u) } else { alert('Chybný PIN nebo uživatel') } }}>
+      <form onSubmit={async (e)=>{ e.preventDefault(); const payload = stage==='pin'? { id: localStorage.getItem('rodina:lastUserId')||undefined, name: localStorage.getItem('rodina:lastName')||name, pin }: { name, pin }; const res = await fetch(api('/api/login'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)}); if(res.ok){ const u = await res.json(); localStorage.setItem('rodina:lastName', u.name); localStorage.setItem('rodina:lastUserId', u.id); localStorage.setItem('rodina:lastStage','pin'); onAuth(u) } else { alert('Chybný PIN nebo uživatel') } }}>
         {stage!=='pin' && <input placeholder="Jméno" value={name} onChange={e=>setName(e.target.value)} />}
         <input placeholder="4-místný PIN" value={pin} onChange={e=>setPin(e.target.value)} />
         <button type="submit">Přihlásit</button>
