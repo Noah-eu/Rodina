@@ -146,9 +146,7 @@ app.get('/api/users', async (req, res) => {
 });
 
 // Return ICE config (used as fallback if Netlify function is not available)
-app.get('/api/ice', (req, res) => {
-  res.json({ iceServers: [ { urls: 'stun:stun.l.google.com:19302' } ] })
-})
+// (removed duplicate simple /api/ice here; see unified Xirsys-enabled version below with STUN fallback)
 
 // Zprávy: text i přílohy (foto/video/audio)
 app.post('/api/message', upload.single('file'), async (req, res) => {
@@ -229,6 +227,11 @@ app.get('/api/ice', async (req, res) => {
     const secret = process.env.XIRSYS_SECRET || process.env.XIRSYS_API_KEY || '';
     const bearer = process.env.XIRSYS_BEARER || '';
 
+    // If no Xirsys credentials configured, provide STUN-only fallback
+    if (!bearer && !(username && secret)) {
+      return res.json({ iceServers: [ { urls: 'stun:stun.l.google.com:19302' } ] });
+    }
+
     const endpoint = `https://${region}.xirsys.net/_turn/${encodeURIComponent(channel)}`;
     const url = new URL(endpoint);
 
@@ -238,8 +241,6 @@ app.get('/api/ice', async (req, res) => {
     } else if (username && secret) {
       const basic = Buffer.from(`${username}:${secret}`).toString('base64');
       headers['Authorization'] = `Basic ${basic}`;
-    } else {
-      return res.status(500).json({ error: 'Xirsys credentials not configured. Set XIRSYS_BEARER or XIRSYS_USERNAME and XIRSYS_SECRET.' });
     }
 
     const options = {
@@ -275,6 +276,8 @@ app.get('/api/ice', async (req, res) => {
     }
     res.json({ iceServers });
   } catch (e) {
+    // On any error, fallback to STUN so basic connectivity still works
+    try { return res.json({ iceServers: [ { urls: 'stun:stun.l.google.com:19302' } ] }); } catch(_) {}
     res.status(500).json({ error: 'Failed to retrieve ICE config', details: e.message });
   }
 });

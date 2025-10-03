@@ -1,0 +1,15 @@
+{
+  "users": [
+    {
+      "id": "MzwNFxsKQVmgb9vqjg",
+      "name": "TestUser",
+      "nameNorm": "testuser",
+      "pinHash": "$2b$10$p3Eh8Z1IeDVh8jNvbXN3JuKUFKhMNJZlsyemuGXkblSDXYnA/ed06",
+      "avatar": null,
+      "online": true
+    }
+  ],
+  "messages": [],
+  "calls": [],
+  "pushSubscriptions": []
+}

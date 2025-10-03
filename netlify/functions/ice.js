@@ -8,21 +8,24 @@ exports.handler = async function(event) {
 
     const url = `https://${region}.xirsys.net/_turn/${encodeURIComponent(channel)}`
     const headers = { 'User-Agent': 'Rodina-Netlify/1.0', 'Accept': 'application/json' }
-    if (bearer) headers['Authorization'] = `Bearer ${bearer}`
-    else if (username && secret) headers['Authorization'] = 'Basic ' + Buffer.from(`${username}:${secret}`).toString('base64')
-    else return { statusCode: 500, body: JSON.stringify({ error: 'Missing Xirsys credentials in Netlify env' }) }
+  if (bearer) headers['Authorization'] = `Bearer ${bearer}`
+  else if (username && secret) headers['Authorization'] = 'Basic ' + Buffer.from(`${username}:${secret}`).toString('base64')
+  else return { statusCode: 200, body: JSON.stringify({ iceServers: [ { urls: 'stun:stun.l.google.com:19302' } ] }) }
 
   const resp = await fetch(url, { headers })
   const json = await resp.json().catch(()=>({}))
     if(!resp.ok){
-      return { statusCode: resp.status, body: JSON.stringify({ error: 'Xirsys request failed', details: json }) }
+      // Fallback to STUN when Xirsys request fails
+      return { statusCode: 200, body: JSON.stringify({ iceServers: [ { urls: 'stun:stun.l.google.com:19302' } ] }) }
     }
     const iceServers = (json && (json.v?.iceServers || json.iceServers || json.d?.iceServers)) || []
     if(!Array.isArray(iceServers)){
-      return { statusCode: 502, body: JSON.stringify({ error: 'Invalid Xirsys response', details: json }) }
+      // Fallback to STUN on invalid response
+      return { statusCode: 200, body: JSON.stringify({ iceServers: [ { urls: 'stun:stun.l.google.com:19302' } ] }) }
     }
     return { statusCode: 200, body: JSON.stringify({ iceServers }) }
   }catch(e){
-    return { statusCode: 500, body: JSON.stringify({ error: 'Function error', details: e.message }) }
+    // Fallback to STUN on any unexpected error
+    return { statusCode: 200, body: JSON.stringify({ iceServers: [ { urls: 'stun:stun.l.google.com:19302' } ] }) }
   }
 }
