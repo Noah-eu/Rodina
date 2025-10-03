@@ -1,7 +1,11 @@
 [build]
   # Install dependencies for sub-packages before building
-  command = "npm --prefix frontend ci && npm --prefix backend ci || true && npm run build:all"
+  command = "NPM_CONFIG_PRODUCTION=false npm --prefix frontend ci && npm --prefix backend ci || true && npm run build:all"
   publish = "frontend/dist"
+
+[build.environment]
+  # Ensure devDependencies (like vite) are installed during build
+  NPM_CONFIG_PRODUCTION = "false"
 
 [context.production.environment]
   NODE_ENV = "production"
