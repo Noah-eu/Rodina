@@ -4,8 +4,17 @@ import io from 'socket.io-client'
 import Pusher from 'pusher-js'
 import { createPeerConnection } from './webrtc'
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:3001'
-const socket = io(API)
+const isProd = import.meta.env.PROD
+const DEV_API = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+const api = (path) => `${isProd ? '' : DEV_API}${path}`
+const mediaUrl = (u) => {
+  if (!u) return ''
+  if (/^https?:\/\//.test(u)) return u
+  return isProd ? `/api${u}` : `${DEV_API}${u}`
+}
+// Socket.IO pouze v dev; v produkci používáme Pusher + REST signaling
+const socket = isProd ? { on: ()=>{}, emit: ()=>{} } : io(DEV_API)
+
 let pusher = null, channel = null
 if (import.meta.env.VITE_PUSHER_KEY && import.meta.env.VITE_PUSHER_CLUSTER){
   pusher = new Pusher(import.meta.env.VITE_PUSHER_KEY, { cluster: import.meta.env.VITE_PUSHER_CLUSTER })
@@ -35,9 +44,7 @@ export default function App(){
     const onMessage = (msg)=> setMessages(m => [...m, msg])
     const onPresence = (p)=> setUsers(u => u.map(us => us.id===p.id?{...us, online:p.online}:us))
     const onIncoming = (callInfo)=>{ setIncomingCall(callInfo); startRingtone() }
-    const onOffer = async ({ sdp })=>{
-      setIncomingCall({ type: 'video', sdp })
-    }
+    const onOffer = async ({ sdp })=>{ setIncomingCall({ type: 'video', sdp }) }
     socket.on('message', onMessage)
     socket.on('presence', onPresence)
     socket.on('incoming_call', onIncoming)
@@ -52,20 +59,12 @@ export default function App(){
     }
   }, [])
 
-  useEffect(()=>{
-    if (user) socket.emit('registerSocket', user.id)
-  }, [user])
-
-  useEffect(()=>{
-    if(remoteVideoRef.current && remoteStream) remoteVideoRef.current.srcObject = remoteStream
-  }, [remoteStream])
-
-  useEffect(()=>{
-    if(localVideoRef.current && localStream) localVideoRef.current.srcObject = localStream
-  }, [localStream])
+  useEffect(()=>{ if (user) socket.emit('registerSocket', user.id) }, [user])
+  useEffect(()=>{ if(remoteVideoRef.current && remoteStream) remoteVideoRef.current.srcObject = remoteStream }, [remoteStream])
+  useEffect(()=>{ if(localVideoRef.current && localStream) localVideoRef.current.srcObject = localStream }, [localStream])
 
   async function fetchUsers(){
-    const res = await axios.get(`${API}/api/users`)
+    const res = await axios.get(api('/api/users'))
     setUsers(res.data)
   }
 
@@ -76,10 +75,10 @@ export default function App(){
       form.append('from', user.id)
       form.append('file', file)
       if (text) form.append('text', text)
-      await fetch(`${API}/api/message`, { method: 'POST', body: form })
+      await fetch(api('/api/message'), { method: 'POST', body: form })
       setFile(null)
     } else {
-      await axios.post(`${API}/api/message`, { from: user.id, text })
+      await axios.post(api('/api/message'), { from: user.id, text })
     }
     setText('')
   }
@@ -95,7 +94,7 @@ export default function App(){
         const form = new FormData()
         form.append('from', user.id)
         form.append('file', blob, 'voice.webm')
-        await fetch(`${API}/api/message`, { method: 'POST', body: form })
+        await fetch(api('/api/message'), { method: 'POST', body: form })
         stream.getTracks().forEach(t=>t.stop())
       }
       rec.start()
@@ -106,19 +105,17 @@ export default function App(){
 
   async function startCall(type='video', toUserId=null){
     if(!user) return
-    // ensure ICE config is loaded once
     if(!iceServersRef.current){
       try{
-        // Prefer Netlify function in production
         const fnUrl = '/.netlify/functions/ice'
         const resFn = await fetch(fnUrl)
         if(resFn.ok){ const data = await resFn.json(); iceServersRef.current = data.iceServers }
-      }catch(e){ }
+      }catch(e){}
       if(!iceServersRef.current){
         try{
-          const res = await fetch(`${API}/api/ice`)
+          const res = await fetch(api('/api/ice'))
           if(res.ok){ const data = await res.json(); iceServersRef.current = data.iceServers }
-        }catch(e){ /* ignore, fallback to default STUN */ }
+        }catch(e){}
       }
     }
     const pc = createPeerConnection({ socket, onTrack: (s)=>setRemoteStream(s), iceServers: iceServersRef.current||undefined })
@@ -127,11 +124,10 @@ export default function App(){
       const stream = await navigator.mediaDevices.getUserMedia({ video: type==='video', audio: true })
       setLocalStream(stream)
       stream.getTracks().forEach(t=>pc.addTrack(t, stream))
-  const offer = await pc.createOffer()
-  await pc.setLocalDescription(offer)
-  // REST signaling pro produkci (Pusher)
-  const offerBody = { sdp: pc.localDescription, from: user.id, to: toUserId }
-  try{ await fetch('/.netlify/functions/proxy/api/rt/offer', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(offerBody) }) }catch(e){ socket.emit('webrtc_offer', offerBody) }
+      const offer = await pc.createOffer()
+      await pc.setLocalDescription(offer)
+      const offerBody = { sdp: pc.localDescription, from: user.id, to: toUserId }
+      try{ await fetch('/.netlify/functions/proxy/api/rt/offer', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(offerBody) }) }catch(e){ socket.emit('webrtc_offer', offerBody) }
       setInCall(true)
     }catch(e){ alert('Nelze získat média: '+e.message) }
   }
@@ -143,12 +139,12 @@ export default function App(){
         const fnUrl = '/.netlify/functions/ice'
         const resFn = await fetch(fnUrl)
         if(resFn.ok){ const data = await resFn.json(); iceServersRef.current = data.iceServers }
-      }catch(e){ }
+      }catch(e){}
       if(!iceServersRef.current){
         try{
-          const res = await fetch(`${API}/api/ice`)
+          const res = await fetch(api('/api/ice'))
           if(res.ok){ const data = await res.json(); iceServersRef.current = data.iceServers }
-        }catch(e){ }
+        }catch(e){}
       }
     }
     const pc = createPeerConnection({ socket, onTrack: (s)=>setRemoteStream(s), iceServers: iceServersRef.current||undefined })
@@ -158,10 +154,10 @@ export default function App(){
       setLocalStream(stream)
       stream.getTracks().forEach(t=>pc.addTrack(t, stream))
       await pc.setRemoteDescription(incomingCall.sdp)
-  const answer = await pc.createAnswer()
-  await pc.setLocalDescription(answer)
-  const answerBody = { sdp: pc.localDescription, from: user.id, to: incomingCall?.from }
-  try{ await fetch('/.netlify/functions/proxy/api/rt/answer', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(answerBody) }) }catch(e){ socket.emit('webrtc_answer', answerBody) }
+      const answer = await pc.createAnswer()
+      await pc.setLocalDescription(answer)
+      const answerBody = { sdp: pc.localDescription, from: user.id, to: incomingCall?.from }
+      try{ await fetch('/.netlify/functions/proxy/api/rt/answer', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(answerBody) }) }catch(e){ socket.emit('webrtc_answer', answerBody) }
       setInCall(true)
       stopRingtone()
       setIncomingCall(null)
@@ -187,9 +183,7 @@ export default function App(){
       setRinging(true)
     }catch(e){}
   }
-  function stopRingtone(){
-    try{ oscRef.current?.o.stop(); oscRef.current=null; setRinging(false) }catch(e){}
-  }
+  function stopRingtone(){ try{ oscRef.current?.o.stop(); oscRef.current=null; setRinging(false) }catch(e){} }
 
   if(!user) return <Auth onAuth={u=>setUser(u)} />
 
@@ -200,7 +194,7 @@ export default function App(){
         <ul>
           {users.map(u=> (
             <li key={u.id} className={u.online? 'online':''}>
-              <img src={(u.avatar? (u.avatar.startsWith('http')?u.avatar:`${API}${u.avatar}`):'/assets/default-avatar.png')} alt="avatar" />
+              <img src={(u.avatar? mediaUrl(u.avatar):'/assets/default-avatar.png')} alt="avatar" />
               <div>
                 <div className="name">{u.name}</div>
                 <div className="last">{u.online? 'Online':'Offline'}</div>
@@ -233,9 +227,9 @@ export default function App(){
         <div className="messages">
           {messages.map(m=> (
             <div key={m.id} className={m.from===user.id? 'me':'them'}>
-              {m.type==='image' && <img src={(m.url?.startsWith('http')?m.url:`${API}${m.url}`)} alt="foto" style={{maxWidth:'60%'}} />}
-              {m.type==='video' && <video src={(m.url?.startsWith('http')?m.url:`${API}${m.url}`)} controls style={{maxWidth:'60%'}} />}
-              {m.type==='audio' && <audio src={(m.url?.startsWith('http')?m.url:`${API}${m.url}`)} controls />}
+              {m.type==='image' && <img src={mediaUrl(m.url)} alt="foto" style={{maxWidth:'60%'}} />}
+              {m.type==='video' && <video src={mediaUrl(m.url)} controls style={{maxWidth:'60%'}} />}
+              {m.type==='audio' && <audio src={mediaUrl(m.url)} controls />}
               {(!m.type || m.type==='text') && <div className="msg-text">{m.text}</div>}
             </div>
           ))}
@@ -255,21 +249,23 @@ function Auth({onAuth}){
   const [name, setName] = useState('')
   const [pin, setPin] = useState('')
   const [stage, setStage] = useState('choose')
+  const avatarRef = React.useRef()
 
   async function register(e){
     e.preventDefault()
     const form = new FormData()
     form.append('name', name)
     form.append('pin', pin)
-    await fetch(`${API}/api/register`, { method: 'POST', body: form })
-    const res = await fetch(`${API}/api/login`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name, pin })})
+    if (avatarRef.current?.files?.[0]) form.append('avatar', avatarRef.current.files[0])
+    await fetch(api('/api/register'), { method: 'POST', body: form })
+    const res = await fetch(api('/api/login'), { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name, pin })})
     if(res.ok){ const user = await res.json(); onAuth(user) }
   }
 
   if(stage==='login') return (
     <div className="auth">
       <h2>Přihlášení</h2>
-      <form onSubmit={async (e)=>{ e.preventDefault(); const res = await fetch(`${API}/api/login`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name, pin })}); if(res.ok){ onAuth(await res.json()) } else { alert('Chybný PIN nebo uživatel') } }}>
+      <form onSubmit={async (e)=>{ e.preventDefault(); const res = await fetch(api('/api/login'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name, pin })}); if(res.ok){ onAuth(await res.json()) } else { alert('Chybný PIN nebo uživatel') } }}>
         <input placeholder="Jméno" value={name} onChange={e=>setName(e.target.value)} />
         <input placeholder="4-místný PIN" value={pin} onChange={e=>setPin(e.target.value)} />
         <button type="submit">Přihlásit</button>
@@ -284,7 +280,7 @@ function Auth({onAuth}){
       <form onSubmit={register}>
         <input placeholder="Jméno" value={name} onChange={e=>setName(e.target.value)} />
         <input placeholder="4-místný PIN" value={pin} onChange={e=>setPin(e.target.value)} />
-        <input type="file" name="avatar" />
+        <input type="file" name="avatar" ref={avatarRef} />
         <button type="submit">Vytvořit profil</button>
       </form>
       <p>Máte už profil? <button onClick={()=>setStage('login')}>Přihlásit se</button></p>
