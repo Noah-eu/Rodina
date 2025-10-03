@@ -130,7 +130,8 @@ export default function App(){
   async function startVoice(){
     try{
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const rec = new MediaRecorder(stream)
+  const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : (MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '')
+  const rec = new MediaRecorder(stream, mime? { mimeType: mime }: undefined)
       const chunks = []
       rec.ondataavailable = e=>{ if(e.data.size) chunks.push(e.data) }
       rec.onstop = async ()=>{
@@ -148,7 +149,7 @@ export default function App(){
       setRecorder(rec); setRecording(true)
     }catch(e){ alert('Mikrofon nedostupný: '+e.message) }
   }
-  function stopVoice(){ if(recorder){ recorder.stop(); setRecording(false); setRecorder(null) } }
+  function stopVoice(){ if(recorder){ setTimeout(()=>{ try{ recorder.stop() }catch(_){} }, 100); setRecording(false); setRecorder(null) } }
 
   // Typing indicator
   useEffect(()=>{
@@ -307,13 +308,14 @@ export default function App(){
               {(!m.type || m.type==='text') && <div className="msg-text">{m.text}</div>}
             </div>
           ))}
+          {!selected && (<div style={{opacity:.7,textAlign:'center',marginTop:20}}>Vyberte osobu ze seznamu, abyste začal(a) chatovat.</div>)}
         </div>
-        <div className="composer">
+        {selected && (<div className="composer">
           <input value={text} onChange={e=>{ setText(e.target.value); setTyping(true) }} placeholder={selected?`Zpráva pro ${selected.name}…`:'Vyberte příjemce vlevo'} />
           <input type="file" onChange={e=>setFile(e.target.files?.[0]||null)} />
           {!recording ? <button onClick={startVoice}>🎤 Hlasovka</button> : <button onClick={stopVoice}>⏹️ Stop</button>}
           <button onClick={send}>Odeslat</button>
-        </div>
+        </div>)}
       </main>
     </div>
   )

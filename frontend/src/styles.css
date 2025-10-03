@@ -2,8 +2,8 @@
 :root{--bg:#0f172a;--panel:#0b1226;--muted:#334155;--text:#e2e8f0;--brand:#4f46e5;--brand2:#22c55e;--danger:#ef4444}
 *{box-sizing:border-box;font-family:Inter,system-ui,Arial,sans-serif}
 html,body,#root{height:100%;margin:0}
-body{background:var(--bg);color:var(--text)}
-.app{display:flex;flex-direction:column;height:100%}
+body{background:var(--bg);color:var(--text);overflow:hidden}
+.app{display:flex;flex-direction:column;height:100dvh}
 .sidebar{width:100%;border-bottom:1px solid rgba(255,255,255,.08);padding:12px;background:var(--panel)}
 .sidebar h2{margin:0 0 10px;color:#cbd5e1}
 .sidebar ul{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:8px}
@@ -14,12 +14,12 @@ body{background:var(--bg);color:var(--text)}
 .sidebar .name{font-weight:600}
 .sidebar li.online .name::after{content:' •';color:var(--brand2)}
 .sidebar li:not(.online){opacity:.6;filter:blur(.2px)}
-.chat{flex:1;display:flex;flex-direction:column;background:linear-gradient(180deg,#0b1226,#0f1a3a)}
-.messages{flex:1;padding:12px;overflow:auto}
+.chat{flex:1;display:flex;flex-direction:column;background:linear-gradient(180deg,#0b1226,#0f1a3a);min-height:0}
+.messages{flex:1;padding:12px;overflow:auto;min-height:0}
 .messages .me{text-align:right}
 .messages .them{text-align:left}
 .messages .msg-text{display:inline-block;padding:10px 12px;border-radius:14px;background:#0e1731;border:1px solid rgba(255,255,255,.08);margin:4px 0}
-.composer{display:flex;gap:8px;padding:10px;border-top:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.25);backdrop-filter:blur(4px)}
+.composer{display:flex;gap:8px;padding:10px;border-top:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.25);backdrop-filter:blur(4px);position:sticky;bottom:0}
 .composer input{flex:1;padding:10px;border-radius:10px;background:#0e1731;color:var(--text);border:1px solid rgba(255,255,255,.08)}
 .composer input[type=file]{max-width:160px;color:var(--text)}
 .composer button{padding:10px 14px;border:none;border-radius:10px;background:var(--brand);color:#fff}
