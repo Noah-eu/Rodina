@@ -1,10 +1,16 @@
 import React, { useEffect, useState } from 'react'
 import axios from 'axios'
 import io from 'socket.io-client'
+import Pusher from 'pusher-js'
 import { createPeerConnection } from './webrtc'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 const socket = io(API)
+let pusher = null, channel = null
+if (import.meta.env.VITE_PUSHER_KEY && import.meta.env.VITE_PUSHER_CLUSTER){
+  pusher = new Pusher(import.meta.env.VITE_PUSHER_KEY, { cluster: import.meta.env.VITE_PUSHER_CLUSTER })
+  channel = pusher.subscribe('famcall')
+}
 
 export default function App(){
   const [user, setUser] = useState(null)
@@ -22,14 +28,26 @@ export default function App(){
 
   useEffect(()=>{
     fetchUsers()
-    socket.on('message', msg => setMessages(m => [...m, msg]))
-    socket.on('presence', p => setUsers(u => u.map(us => us.id===p.id?{...us, online:p.online}:us)))
-    socket.on('incoming_call', (callInfo)=>{
+    const onMessage = (msg)=> setMessages(m => [...m, msg])
+    const onPresence = (p)=> setUsers(u => u.map(us => us.id===p.id?{...us, online:p.online}:us))
+    const onIncoming = (callInfo)=>{
       setIncomingCall(callInfo)
-    })
-    socket.on('webrtc_offer', async ({ sdp })=>{
+    }
+    const onOffer = async ({ sdp })=>{
       setIncomingCall({ type: 'video', sdp })
-    })
+    }
+    socket.on('message', onMessage)
+    socket.on('presence', onPresence)
+    socket.on('incoming_call', onIncoming)
+    socket.on('webrtc_offer', onOffer)
+    if(channel){
+      channel.bind('message', onMessage)
+      channel.bind('presence', onPresence)
+      channel.bind('incoming_call', onIncoming)
+      channel.bind('webrtc_offer', onOffer)
+      channel.bind('webrtc_answer', ({sdp})=> pcRef.current?.setRemoteDescription(sdp))
+      channel.bind('webrtc_ice', ({candidate})=> pcRef.current?.addIceCandidate(candidate).catch(()=>{}))
+    }
   }, [])
 
   useEffect(()=>{

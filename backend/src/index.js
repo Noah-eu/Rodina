@@ -1,6 +1,4 @@
 require('dotenv').config();
-require('dotenv').config();
-require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -13,6 +11,8 @@ try { require('dotenv').config({ path: path.resolve(__dirname, '..', '..', '.env
 const multer = require('multer');
 const https = require('https');
 const { URL } = require('url');
+const Pusher = require('pusher');
+const webpush = require('web-push');
 // jednoduchá DB přes soubor (vyhneme se ESM-only lowdb kvůli testům)
 // místo ESM-only nanoid použijeme jednoduchý CJS id generator
 function nanoid(len = 10){
@@ -38,7 +38,7 @@ function readDB(){
     const raw = fs.readFileSync(dbPath, 'utf8');
     dbData = JSON.parse(raw);
   }catch(e){
-    dbData = { users: [], messages: [], calls: [] };
+    dbData = { users: [], messages: [], calls: [], pushSubscriptions: [] };
     fs.writeFileSync(dbPath, JSON.stringify(dbData, null, 2));
   }
 }
@@ -55,6 +55,49 @@ const upload = multer({ dest: path.join(__dirname, '..', 'uploads') });
 const uploadsDir = path.join(__dirname, '..', 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
 
+// Pusher setup (server-side)
+const pusherEnabled = Boolean(process.env.PUSHER_APP_ID && process.env.PUSHER_KEY && process.env.PUSHER_SECRET && process.env.PUSHER_CLUSTER);
+const pusher = pusherEnabled ? new Pusher({
+  appId: process.env.PUSHER_APP_ID,
+  key: process.env.PUSHER_KEY,
+  secret: process.env.PUSHER_SECRET,
+  cluster: process.env.PUSHER_CLUSTER,
+  useTLS: true
+}) : null;
+
+function broadcast(event, payload){
+  // Socket.IO (lokální dev)
+  try{ io.emit(event, payload); }catch(e){}
+  // Pusher (produkce)
+  if (pusher) {
+    pusher.trigger('famcall', event, payload).catch(()=>{})
+  }
+}
+
+// Web Push (VAPID)
+const vapidPath = path.join(__dirname, '..', 'vapid.json');
+function ensureVapid(){
+  let pub = process.env.VAPID_PUBLIC_KEY;
+  let priv = process.env.VAPID_PRIVATE_KEY;
+  const contact = process.env.VAPID_EMAIL || 'mailto:david.eder78@gmail.com';
+  if (!pub || !priv){
+    try{
+      if (fs.existsSync(vapidPath)){
+        const saved = JSON.parse(fs.readFileSync(vapidPath, 'utf8'));
+        pub = saved.publicKey; priv = saved.privateKey;
+      } else {
+        const keys = webpush.generateVAPIDKeys();
+        pub = keys.publicKey; priv = keys.privateKey;
+        fs.writeFileSync(vapidPath, JSON.stringify(keys, null, 2));
+      }
+    }catch(e){}
+  }
+  if (pub && priv){
+    webpush.setVapidDetails(contact, pub, priv);
+  }
+}
+ensureVapid();
+
 app.post('/api/register', upload.single('avatar'), async (req, res) => {
   const { name, pin } = req.body;
   if (!name || !pin || pin.length !== 4) return res.status(400).json({ error: 'Neplatný vstup' });
@@ -68,6 +111,7 @@ app.post('/api/register', upload.single('avatar'), async (req, res) => {
   const user = { id, name, pinHash: hash, avatar, online: true };
   dbData.users.push(user);
   writeDB();
+  broadcast('presence', { id, online: true });
   res.json({ id, name, avatar });
 });
 
@@ -81,6 +125,7 @@ app.post('/api/login', async (req, res) => {
   if (!match) return res.status(401).json({ error: 'Špatný PIN' });
   user.online = true;
   writeDB();
+  broadcast('presence', { id: user.id, online: true });
   res.json({ id: user.id, name: user.name, avatar: user.avatar });
 });
 
@@ -101,8 +146,26 @@ app.post('/api/message', async (req, res) => {
   const msg = { id: nanoid(), from, text, type, ts: Date.now() };
   dbData.messages.push(msg);
   writeDB();
-  io.emit('message', msg);
+  broadcast('message', msg);
+  // Push oznámení
+  const subs = Array.isArray(dbData.pushSubscriptions) ? dbData.pushSubscriptions : [];
+  for (const sub of subs){
+    try{ await webpush.sendNotification(sub, JSON.stringify({ title: 'FamCall', body: text })) }catch(e){}
+  }
   res.json(msg);
+});
+
+// Presence update endpoint (explicit)
+app.post('/api/presence', (req, res)=>{
+  const { id, online } = req.body || {};
+  if(!id) return res.status(400).json({ error: 'Missing id' });
+  readDB();
+  const u = dbData.users.find(x=>x.id===id);
+  if(!u) return res.status(404).json({ error: 'Not found' });
+  u.online = Boolean(online);
+  writeDB();
+  broadcast('presence', { id: u.id, online: u.online });
+  res.json({ ok: true });
 });
 
 // ICE config fetcher (Xirsys)
@@ -164,6 +227,30 @@ app.get('/api/ice', async (req, res) => {
   }
 });
 
+// Signaling REST endpoints (for Pusher triggers from clients)
+app.post('/api/rt/offer', (req, res)=>{ broadcast('webrtc_offer', { sdp: req.body?.sdp }); res.json({ ok: true }) })
+app.post('/api/rt/answer', (req, res)=>{ broadcast('webrtc_answer', { sdp: req.body?.sdp }); res.json({ ok: true }) })
+app.post('/api/rt/ice', (req, res)=>{ broadcast('webrtc_ice', { candidate: req.body?.candidate }); res.json({ ok: true }) })
+app.post('/api/call', (req, res)=>{ broadcast('incoming_call', req.body || {}); res.json({ ok: true }) })
+
+// Web Push: get VAPID public key and subscribe
+app.get('/api/push/publicKey', (req, res)=>{
+  try{
+    const saved = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'vapid.json'), 'utf8'));
+    return res.json({ publicKey: saved.publicKey })
+  }catch(e){ return res.status(404).json({ error: 'No VAPID key' }) }
+})
+app.post('/api/push/subscribe', (req, res)=>{
+  const subscription = req.body;
+  if(!subscription) return res.status(400).json({ error: 'Missing subscription' });
+  readDB();
+  dbData.pushSubscriptions = Array.isArray(dbData.pushSubscriptions) ? dbData.pushSubscriptions : [];
+  const exists = dbData.pushSubscriptions.find(s => s.endpoint === subscription.endpoint);
+  if(!exists) dbData.pushSubscriptions.push(subscription);
+  writeDB();
+  res.json({ ok: true });
+})
+
 io.on('connection', (socket) => {
   socket.on('registerSocket', (userId) => {
     socket.userId = userId;
@@ -172,7 +259,7 @@ io.on('connection', (socket) => {
     if (user) {
       user.online = true;
       writeDB();
-      io.emit('presence', { id: user.id, online: true });
+  broadcast('presence', { id: user.id, online: true });
     }
   });
 
@@ -183,23 +270,23 @@ io.on('connection', (socket) => {
       if (user) {
         user.online = false;
         writeDB();
-        io.emit('presence', { id: user.id, online: false });
+  broadcast('presence', { id: user.id, online: false });
       }
     }
   });
 
   socket.on('call', (callInfo) => {
-    io.emit('incoming_call', callInfo);
+    broadcast('incoming_call', callInfo);
   });
   // WebRTC signaling proxy
   socket.on('webrtc_offer', (data)=>{
-    socket.broadcast.emit('webrtc_offer', data)
+    socket.broadcast.emit('webrtc_offer', data); broadcast('webrtc_offer', data)
   })
   socket.on('webrtc_answer', (data)=>{
-    socket.broadcast.emit('webrtc_answer', data)
+    socket.broadcast.emit('webrtc_answer', data); broadcast('webrtc_answer', data)
   })
   socket.on('webrtc_ice', (data)=>{
-    socket.broadcast.emit('webrtc_ice', data)
+    socket.broadcast.emit('webrtc_ice', data); broadcast('webrtc_ice', data)
   })
 });
 
