@@ -248,7 +248,7 @@ export default function App(){
   return (
     <div className="app">
       <aside className="sidebar">
-        <h2>Rodina</h2>
+        <h2>Rodina <small style={{opacity:.6,fontSize:12,marginLeft:8}}>{(typeof __BUILD_TIME__!=='undefined')? new Date(__BUILD_TIME__).toLocaleTimeString(): ''}</small></h2>
         <ul>
           {users.filter(u=>u.id!==user.id).map(u=> (
             <li key={u.id} className={(u.online? 'online ':'') + (selected?.id===u.id?'selected':'')} onClick={()=>setSelected(u)}>

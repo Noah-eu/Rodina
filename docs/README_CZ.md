@@ -28,7 +28,7 @@ Tím se spustí backend a frontend (skriptem `concurrently`). Backend běží na
 3. Tuto URL nastavte v Netlify jako `BACKEND_URL` a redeployněte web.
 
 Poznámky:
-- `UPLOADS_DIR` je nastaveno na persistentní disk, aby fotky/hlasy zůstaly zachované.
+- Perzistence: nastavte v Renderu disk a proměnné `UPLOADS_DIR` (např. `/opt/render/project/src/uploads`) a volitelně `DATA_DIR` (pokud chcete `db.json` držet jinde – defaultně se použije stejné místo jako `UPLOADS_DIR`).
 - Přidejte do Renderu případné klíče (Pusher, VAPID, XIRSYS) dle potřeby.
 
 ## Správa PINů a profilů
