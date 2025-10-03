@@ -32,7 +32,10 @@ app.use(express.json());
 const uploadsDir = process.env.UPLOADS_DIR || path.join(__dirname, '..', 'uploads');
 app.use('/uploads', express.static(uploadsDir))
 
-const dbPath = path.join(__dirname, '..', 'db.json');
+// Data dir (use persistent disk if configured)
+const dataDir = process.env.DATA_DIR || uploadsDir;
+try { if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true }); } catch(e) {}
+const dbPath = path.join(dataDir, 'db.json');
 let dbData = null;
 
 function readDB(){
@@ -103,13 +106,14 @@ app.post('/api/register', upload.single('avatar'), async (req, res) => {
   const { name, pin } = req.body;
   if (!name || !pin || pin.length !== 4) return res.status(400).json({ error: 'Neplatný vstup' });
   readDB();
-  const existing = dbData.users.find(u => u.name === name);
+  const norm = String(name).trim().toLowerCase();
+  const existing = dbData.users.find(u => (u.nameNorm || u.name?.toLowerCase?.()) === norm);
   if (existing) return res.status(400).json({ error: 'Uživatel již existuje' });
   const salt = await bcrypt.genSalt(10);
   const hash = await bcrypt.hash(pin, salt);
   const id = nanoid();
   const avatar = req.file ? `/uploads/${req.file.filename}` : null;
-  const user = { id, name, pinHash: hash, avatar, online: true };
+  const user = { id, name, nameNorm: norm, pinHash: hash, avatar, online: true };
   dbData.users.push(user);
   writeDB();
   broadcast('presence', { id, online: true });
@@ -120,7 +124,8 @@ app.post('/api/login', async (req, res) => {
   const { name, pin } = req.body;
   if (!name || !pin) return res.status(400).json({ error: 'Neplatný vstup' });
   readDB();
-  const user = dbData.users.find(u => u.name === name);
+  const norm = String(name).trim().toLowerCase();
+  const user = dbData.users.find(u => (u.nameNorm || u.name?.toLowerCase?.()) === norm);
   if (!user) return res.status(404).json({ error: 'Uživatel nenalezen' });
   const match = await bcrypt.compare(pin, user.pinHash);
   if (!match) return res.status(401).json({ error: 'Špatný PIN' });
@@ -144,9 +149,10 @@ app.get('/api/ice', (req, res) => {
 app.post('/api/message', upload.single('file'), async (req, res) => {
   const isMultipart = req.is('multipart/form-data');
   const from = isMultipart ? (req.body?.from) : req.body?.from;
+  const to = isMultipart ? (req.body?.to) : req.body?.to;
   if (!from) return res.status(400).json({ error: 'Neplatný vstup: chybí odesílatel' });
 
-  let msg = { id: nanoid(), from, ts: Date.now() };
+  let msg = { id: nanoid(), from, to: to || null, ts: Date.now() };
 
   if (isMultipart && req.file){
     // Příloha
@@ -185,8 +191,13 @@ app.post('/api/message', upload.single('file'), async (req, res) => {
 // Seznam zpráv (posledních N)
 app.get('/api/messages', (req, res)=>{
   const limit = Math.max(1, Math.min(500, parseInt(req.query.limit||'100',10)));
+  const me = req.query.me?.toString();
+  const peer = req.query.peer?.toString();
   readDB();
-  const all = dbData.messages || [];
+  let all = dbData.messages || [];
+  if (me && peer){
+    all = all.filter(m => (m.from===me && m.to===peer) || (m.from===peer && m.to===me));
+  }
   const slice = all.slice(-limit);
   res.json(slice);
 })

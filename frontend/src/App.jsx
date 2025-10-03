@@ -26,6 +26,7 @@ export default function App(){
   const [user, setUser] = useState(null)
   const [users, setUsers] = useState([])
   const [messages, setMessages] = useState([])
+  const [selected, setSelected] = useState(null)
   const [text, setText] = useState('')
   const [file, setFile] = useState(null)
   const [recorder, setRecorder] = useState(null)
@@ -71,15 +72,17 @@ export default function App(){
 
   async function send(){
     if(!user) return alert('Přihlašte se')
+    if(!selected) return alert('Vyberte příjemce v seznamu vlevo')
     if (file){
       const form = new FormData()
       form.append('from', user.id)
+      form.append('to', selected.id)
       form.append('file', file)
       if (text) form.append('text', text)
       await fetch(api('/api/message'), { method: 'POST', body: form })
       setFile(null)
     } else {
-      await axios.post(api('/api/message'), { from: user.id, text })
+      await axios.post(api('/api/message'), { from: user.id, to: selected.id, text })
     }
     setText('')
   }
@@ -193,8 +196,8 @@ export default function App(){
       <aside className="sidebar">
         <h2>Rodina</h2>
         <ul>
-          {users.map(u=> (
-            <li key={u.id} className={u.online? 'online':''}>
+          {users.filter(u=>u.id!==user.id).map(u=> (
+            <li key={u.id} className={(u.online? 'online ':'') + (selected?.id===u.id?'selected':'')} onClick={()=>setSelected(u)}>
               <img src={(u.avatar? mediaUrl(u.avatar):'/assets/default-avatar.png')} alt="avatar" />
               <div>
                 <div className="name">{u.name}</div>
@@ -226,7 +229,9 @@ export default function App(){
           <div className="call-controls"><button onClick={endCall}>Ukončit</button></div>
         </div>}
         <div className="messages">
-          {messages.map(m=> (
+          {messages
+            .filter(m=> !selected || (m.to? ((m.from===user.id && m.to===selected.id) || (m.from===selected.id && m.to===user.id)) : true))
+            .map(m=> (
             <div key={m.id} className={m.from===user.id? 'me':'them'}>
               {m.type==='image' && <img src={mediaUrl(m.url)} alt="foto" style={{maxWidth:'60%'}} />}
               {m.type==='video' && <video src={mediaUrl(m.url)} controls style={{maxWidth:'60%'}} />}
@@ -236,7 +241,7 @@ export default function App(){
           ))}
         </div>
         <div className="composer">
-          <input value={text} onChange={e=>setText(e.target.value)} placeholder="Napište zprávu..." />
+          <input value={text} onChange={e=>setText(e.target.value)} placeholder={selected?`Zpráva pro ${selected.name}…`:'Vyberte příjemce vlevo'} />
           <input type="file" onChange={e=>setFile(e.target.files?.[0]||null)} />
           {!recording ? <button onClick={startVoice}>🎤 Hlasovka</button> : <button onClick={stopVoice}>⏹️ Stop</button>}
           <button onClick={send}>Odeslat</button>
@@ -252,6 +257,13 @@ function Auth({onAuth}){
   const [stage, setStage] = useState('choose')
   const avatarRef = React.useRef()
 
+  useEffect(()=>{
+    const lastName = localStorage.getItem('rodina:lastName') || ''
+    const lastStage = localStorage.getItem('rodina:lastStage') || 'choose'
+    setName(lastName)
+    setStage(lastStage)
+  }, [])
+
   async function register(e){
     e.preventDefault()
     const form = new FormData()
@@ -260,14 +272,14 @@ function Auth({onAuth}){
     if (avatarRef.current?.files?.[0]) form.append('avatar', avatarRef.current.files[0])
     await fetch(api('/api/register'), { method: 'POST', body: form })
     const res = await fetch(api('/api/login'), { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name, pin })})
-    if(res.ok){ const user = await res.json(); onAuth(user) }
+    if(res.ok){ const user = await res.json(); localStorage.setItem('rodina:lastName', name); localStorage.setItem('rodina:lastStage','pin'); onAuth(user) }
   }
 
-  if(stage==='login') return (
+  if(stage==='login' || stage==='pin') return (
     <div className="auth">
       <h2>Přihlášení</h2>
-      <form onSubmit={async (e)=>{ e.preventDefault(); const res = await fetch(api('/api/login'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name, pin })}); if(res.ok){ onAuth(await res.json()) } else { alert('Chybný PIN nebo uživatel') } }}>
-        <input placeholder="Jméno" value={name} onChange={e=>setName(e.target.value)} />
+      <form onSubmit={async (e)=>{ e.preventDefault(); const payload = stage==='pin'? { name: localStorage.getItem('rodina:lastName')||name, pin }: { name, pin }; const res = await fetch(api('/api/login'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)}); if(res.ok){ const u = await res.json(); localStorage.setItem('rodina:lastName', payload.name); localStorage.setItem('rodina:lastStage','pin'); onAuth(u) } else { alert('Chybný PIN nebo uživatel') } }}>
+        {stage!=='pin' && <input placeholder="Jméno" value={name} onChange={e=>setName(e.target.value)} />}
         <input placeholder="4-místný PIN" value={pin} onChange={e=>setPin(e.target.value)} />
         <button type="submit">Přihlásit</button>
       </form>
@@ -284,7 +296,7 @@ function Auth({onAuth}){
         <input type="file" name="avatar" ref={avatarRef} />
         <button type="submit">Vytvořit profil</button>
       </form>
-      <p>Máte už profil? <button onClick={()=>setStage('login')}>Přihlásit se</button></p>
+      <p>Máte už profil? <button onClick={()=>setStage('login')}>Přihlásit se</button> <button onClick={()=>setStage('pin')}>Jen PIN</button></p>
     </div>
   )
 }
