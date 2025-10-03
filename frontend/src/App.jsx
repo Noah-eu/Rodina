@@ -16,6 +16,7 @@ export default function App(){
   const [incomingCall, setIncomingCall] = useState(null)
   const [inCall, setInCall] = useState(false)
   const pcRef = React.useRef(null)
+  const iceServersRef = React.useRef(null)
   const localVideoRef = React.useRef()
   const remoteVideoRef = React.useRef()
 
@@ -56,7 +57,14 @@ export default function App(){
 
   async function startCall(type='video'){
     if(!user) return
-    const pc = createPeerConnection({ socket, onTrack: (s)=>setRemoteStream(s) })
+    // ensure ICE config is loaded once
+    if(!iceServersRef.current){
+      try{
+        const res = await fetch(`${API}/api/ice`)
+        if(res.ok){ const data = await res.json(); iceServersRef.current = data.iceServers }
+      }catch(e){ /* ignore, fallback to default STUN */ }
+    }
+    const pc = createPeerConnection({ socket, onTrack: (s)=>setRemoteStream(s), iceServers: iceServersRef.current||undefined })
     pcRef.current = pc
     try{
       const stream = await navigator.mediaDevices.getUserMedia({ video: type==='video', audio: true })
@@ -71,7 +79,13 @@ export default function App(){
 
   async function acceptCall(){
     if(!incomingCall) return
-    const pc = createPeerConnection({ socket, onTrack: (s)=>setRemoteStream(s) })
+    if(!iceServersRef.current){
+      try{
+        const res = await fetch(`${API}/api/ice`)
+        if(res.ok){ const data = await res.json(); iceServersRef.current = data.iceServers }
+      }catch(e){ }
+    }
+    const pc = createPeerConnection({ socket, onTrack: (s)=>setRemoteStream(s), iceServers: iceServersRef.current||undefined })
     pcRef.current = pc
     try{
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })

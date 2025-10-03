@@ -1,3 +1,6 @@
+require('dotenv').config();
+require('dotenv').config();
+require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -6,6 +9,8 @@ const bcrypt = require('bcrypt');
 const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
+const https = require('https');
+const { URL } = require('url');
 // jednoduchá DB přes soubor (vyhneme se ESM-only lowdb kvůli testům)
 // místo ESM-only nanoid použijeme jednoduchý CJS id generator
 function nanoid(len = 10){
@@ -90,6 +95,65 @@ app.post('/api/message', async (req, res) => {
   writeDB();
   io.emit('message', msg);
   res.json(msg);
+});
+
+// ICE config fetcher (Xirsys)
+app.get('/api/ice', async (req, res) => {
+  try {
+    const channel = (req.query.channel || process.env.XIRSYS_CHANNEL || 'default').toString();
+    const region = (process.env.XIRSYS_REGION || 'global').toString();
+    const username = process.env.XIRSYS_USERNAME || '';
+    const secret = process.env.XIRSYS_SECRET || process.env.XIRSYS_API_KEY || '';
+    const bearer = process.env.XIRSYS_BEARER || '';
+
+    const endpoint = `https://${region}.xirsys.net/_turn/${encodeURIComponent(channel)}`;
+    const url = new URL(endpoint);
+
+    const headers = { 'User-Agent': 'Rodina/1.0', 'Accept': 'application/json' };
+    if (bearer) {
+      headers['Authorization'] = `Bearer ${bearer}`;
+    } else if (username && secret) {
+      const basic = Buffer.from(`${username}:${secret}`).toString('base64');
+      headers['Authorization'] = `Basic ${basic}`;
+    } else {
+      return res.status(500).json({ error: 'Xirsys credentials not configured. Set XIRSYS_BEARER or XIRSYS_USERNAME and XIRSYS_SECRET.' });
+    }
+
+    const options = {
+      method: 'GET',
+      hostname: url.hostname,
+      path: url.pathname + (url.search || ''),
+      headers
+    };
+
+    const fetchJson = () => new Promise((resolve, reject) => {
+      const reqHttps = https.request(options, (r) => {
+        let data = '';
+        r.on('data', chunk => data += chunk);
+        r.on('end', () => {
+          try {
+            const json = JSON.parse(data || '{}');
+            resolve({ status: r.statusCode || 0, json });
+          } catch (e) { reject(e); }
+        });
+      });
+      reqHttps.on('error', reject);
+      reqHttps.end();
+    });
+
+    const { status, json } = await fetchJson();
+    if (status < 200 || status >= 300) {
+      return res.status(status || 502).json({ error: 'Xirsys request failed', details: json });
+    }
+    // Normalize various Xirsys response shapes
+    const iceServers = (json && (json.v?.iceServers || json.iceServers || json.d?.iceServers)) || [];
+    if (!Array.isArray(iceServers)) {
+      return res.status(502).json({ error: 'Invalid Xirsys response', details: json });
+    }
+    res.json({ iceServers });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to retrieve ICE config', details: e.message });
+  }
 });
 
 io.on('connection', (socket) => {

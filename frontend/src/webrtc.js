@@ -1,7 +1,7 @@
 // Jednoduchý WebRTC helper pro peer connection a signaling přes Socket.IO
-export function createPeerConnection({socket, onTrack, onIceCandidate, isCaller=false}){
+export function createPeerConnection({socket, onTrack, onIceCandidate, isCaller=false, iceServers}){
   const pc = new RTCPeerConnection({
-    iceServers: [
+    iceServers: iceServers && iceServers.length ? iceServers : [
       { urls: 'stun:stun.l.google.com:19302' }
     ]
   })
