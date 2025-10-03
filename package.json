@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "postinstall": "npm --prefix frontend ci && npm --prefix backend ci || true",
+    "start": "npm --prefix backend start", 
+    "root-start": "npm --prefix backend start",
     "build:frontend": "cd frontend && npm run build",
     "build:backend": "cd backend && npm run build || true",
     "build:all": "npm run build:frontend && npm run build:backend",
