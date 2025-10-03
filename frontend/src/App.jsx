@@ -104,7 +104,7 @@ export default function App(){
   }
   function stopVoice(){ if(recorder){ recorder.stop(); setRecording(false); setRecorder(null) } }
 
-  async function startCall(type='video'){
+  async function startCall(type='video', toUserId=null){
     if(!user) return
     // ensure ICE config is loaded once
     if(!iceServersRef.current){
@@ -130,7 +130,8 @@ export default function App(){
   const offer = await pc.createOffer()
   await pc.setLocalDescription(offer)
   // REST signaling pro produkci (Pusher)
-  try{ await fetch('/.netlify/functions/proxy/api/rt/offer', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ sdp: pc.localDescription }) }) }catch(e){ socket.emit('webrtc_offer', { sdp: pc.localDescription }) }
+  const offerBody = { sdp: pc.localDescription, from: user.id, to: toUserId }
+  try{ await fetch('/.netlify/functions/proxy/api/rt/offer', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(offerBody) }) }catch(e){ socket.emit('webrtc_offer', offerBody) }
       setInCall(true)
     }catch(e){ alert('Nelze získat média: '+e.message) }
   }
@@ -159,7 +160,8 @@ export default function App(){
       await pc.setRemoteDescription(incomingCall.sdp)
   const answer = await pc.createAnswer()
   await pc.setLocalDescription(answer)
-  try{ await fetch('/.netlify/functions/proxy/api/rt/answer', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ sdp: pc.localDescription }) }) }catch(e){ socket.emit('webrtc_answer', { sdp: pc.localDescription }) }
+  const answerBody = { sdp: pc.localDescription, from: user.id, to: incomingCall?.from }
+  try{ await fetch('/.netlify/functions/proxy/api/rt/answer', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(answerBody) }) }catch(e){ socket.emit('webrtc_answer', answerBody) }
       setInCall(true)
       stopRingtone()
       setIncomingCall(null)
@@ -198,14 +200,14 @@ export default function App(){
         <ul>
           {users.map(u=> (
             <li key={u.id} className={u.online? 'online':''}>
-              <img src={u.avatar||'/assets/default-avatar.png'} alt="avatar" />
+              <img src={(u.avatar? (u.avatar.startsWith('http')?u.avatar:`${API}${u.avatar}`):'/assets/default-avatar.png')} alt="avatar" />
               <div>
                 <div className="name">{u.name}</div>
                 <div className="last">{u.online? 'Online':'Offline'}</div>
               </div>
               <div>
-                <button onClick={()=>startCall('video')}>Video</button>
-                <button onClick={()=>startCall('audio')}>Hovor</button>
+                <button onClick={()=>startCall('video', u.id)}>Video</button>
+                <button onClick={()=>startCall('audio', u.id)}>Hovor</button>
               </div>
             </li>
           ))}
@@ -231,9 +233,9 @@ export default function App(){
         <div className="messages">
           {messages.map(m=> (
             <div key={m.id} className={m.from===user.id? 'me':'them'}>
-              {m.type==='image' && <img src={m.url} alt="foto" style={{maxWidth:'60%'}} />}
-              {m.type==='video' && <video src={m.url} controls style={{maxWidth:'60%'}} />}
-              {m.type==='audio' && <audio src={m.url} controls />}
+              {m.type==='image' && <img src={(m.url?.startsWith('http')?m.url:`${API}${m.url}`)} alt="foto" style={{maxWidth:'60%'}} />}
+              {m.type==='video' && <video src={(m.url?.startsWith('http')?m.url:`${API}${m.url}`)} controls style={{maxWidth:'60%'}} />}
+              {m.type==='audio' && <audio src={(m.url?.startsWith('http')?m.url:`${API}${m.url}`)} controls />}
               {(!m.type || m.type==='text') && <div className="msg-text">{m.text}</div>}
             </div>
           ))}

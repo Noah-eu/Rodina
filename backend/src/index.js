@@ -263,9 +263,9 @@ app.get('/api/ice', async (req, res) => {
 });
 
 // Signaling REST endpoints (for Pusher triggers from clients)
-app.post('/api/rt/offer', (req, res)=>{ broadcast('webrtc_offer', { sdp: req.body?.sdp }); res.json({ ok: true }) })
-app.post('/api/rt/answer', (req, res)=>{ broadcast('webrtc_answer', { sdp: req.body?.sdp }); res.json({ ok: true }) })
-app.post('/api/rt/ice', (req, res)=>{ broadcast('webrtc_ice', { candidate: req.body?.candidate }); res.json({ ok: true }) })
+app.post('/api/rt/offer', (req, res)=>{ const payload = req.body || {}; broadcast('webrtc_offer', payload); res.json({ ok: true }) })
+app.post('/api/rt/answer', (req, res)=>{ const payload = req.body || {}; broadcast('webrtc_answer', payload); res.json({ ok: true }) })
+app.post('/api/rt/ice', (req, res)=>{ const payload = req.body || {}; broadcast('webrtc_ice', payload); res.json({ ok: true }) })
 app.post('/api/call', async (req, res)=>{
   const info = req.body || {};
   broadcast('incoming_call', info);

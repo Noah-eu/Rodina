@@ -8,8 +8,8 @@ export function createPeerConnection({socket, onTrack, onIceCandidate, isCaller=
 
   pc.onicecandidate = async (e)=>{
     if(e.candidate){
-      try{ await fetch('/.netlify/functions/proxy/api/rt/ice', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ candidate: e.candidate }) }) }
-      catch(_){ socket.emit('webrtc_ice', { candidate: e.candidate }) }
+  try{ await fetch('/.netlify/functions/proxy/api/rt/ice', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ candidate: e.candidate }) }) }
+  catch(_){ socket.emit('webrtc_ice', { candidate: e.candidate }) }
     }
   }
   pc.ontrack = (e)=> onTrack && onTrack(e.streams[0])
