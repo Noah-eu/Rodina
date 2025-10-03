@@ -1,5 +1,6 @@
 [build]
-  command = "npm run build:all"
+  # Install dependencies for sub-packages before building
+  command = "npm --prefix frontend ci && npm --prefix backend ci || true && npm run build:all"
   publish = "frontend/dist"
 
 [context.production.environment]

@@ -28,6 +28,7 @@ const io = new Server(server, { cors: { origin: '*' } });
 
 app.use(cors());
 app.use(express.json());
+app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')))
 
 const dbPath = path.join(__dirname, '..', 'db.json');
 let dbData = null;
@@ -87,6 +88,11 @@ app.get('/api/users', async (req, res) => {
   readDB();
   res.json(dbData.users.map(u => ({ id: u.id, name: u.name, avatar: u.avatar, online: u.online })));
 });
+
+// Return ICE config (used as fallback if Netlify function is not available)
+app.get('/api/ice', (req, res) => {
+  res.json({ iceServers: [ { urls: 'stun:stun.l.google.com:19302' } ] })
+})
 
 app.post('/api/message', async (req, res) => {
   const { from, text, type = 'text' } = req.body;
