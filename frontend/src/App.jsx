@@ -21,6 +21,7 @@ export default function App(){
   const [remoteStream, setRemoteStream] = useState(null)
   const [incomingCall, setIncomingCall] = useState(null)
   const [inCall, setInCall] = useState(false)
+  const [ringing, setRinging] = useState(false)
   const pcRef = React.useRef(null)
   const iceServersRef = React.useRef(null)
   const localVideoRef = React.useRef()
@@ -30,9 +31,7 @@ export default function App(){
     fetchUsers()
     const onMessage = (msg)=> setMessages(m => [...m, msg])
     const onPresence = (p)=> setUsers(u => u.map(us => us.id===p.id?{...us, online:p.online}:us))
-    const onIncoming = (callInfo)=>{
-      setIncomingCall(callInfo)
-    }
+    const onIncoming = (callInfo)=>{ setIncomingCall(callInfo); startRingtone() }
     const onOffer = async ({ sdp })=>{
       setIncomingCall({ type: 'video', sdp })
     }
@@ -129,6 +128,7 @@ export default function App(){
       await pc.setLocalDescription(answer)
       socket.emit('webrtc_answer', { sdp: pc.localDescription })
       setInCall(true)
+      stopRingtone()
       setIncomingCall(null)
     }catch(e){ alert('Nelze přijmout hovor: '+e.message) }
   }
@@ -137,6 +137,23 @@ export default function App(){
     if(pcRef.current){ pcRef.current.close(); pcRef.current=null }
     localStream?.getTracks().forEach(t=>t.stop())
     setLocalStream(null); setRemoteStream(null); setInCall(false)
+  }
+
+  // Ringtone pomocí WebAudio (abychom nemuseli vkládat binární soubory)
+  const audioCtxRef = React.useRef(null)
+  const oscRef = React.useRef(null)
+  function startRingtone(){
+    try{
+      if(!audioCtxRef.current) audioCtxRef.current = new (window.AudioContext||window.webkitAudioContext)()
+      const ctx = audioCtxRef.current
+      const o = ctx.createOscillator(); const g = ctx.createGain();
+      o.type = 'sine'; o.frequency.value = 880; g.gain.value = 0.02; o.connect(g); g.connect(ctx.destination); o.start()
+      oscRef.current = { o, g }
+      setRinging(true)
+    }catch(e){}
+  }
+  function stopRingtone(){
+    try{ oscRef.current?.o.stop(); oscRef.current=null; setRinging(false) }catch(e){}
   }
 
   if(!user) return <Auth onAuth={u=>setUser(u)} />
@@ -162,6 +179,17 @@ export default function App(){
         </ul>
       </aside>
       <main className="chat">
+        {!!incomingCall && !inCall && (
+          <div className="call-overlay">
+            <div className="overlay-card">
+              <h3>Příchozí hovor</h3>
+              <div className="buttons">
+                <button onClick={acceptCall}>Přijmout</button>
+                <button onClick={()=>{ setIncomingCall(null); stopRingtone() }}>Odmítnout</button>
+              </div>
+            </div>
+          </div>
+        )}
         {inCall && <div className="call-screen">
           <video ref={remoteVideoRef} autoPlay playsInline style={{width:'100%'}}></video>
           <video ref={localVideoRef} autoPlay playsInline muted style={{width:120,position:'absolute',right:16,top:16}}></video>

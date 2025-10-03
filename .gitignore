@@ -8,3 +8,6 @@ backend/db.json
 frontend/node_modules
 frontend/dist
 coverage
+.env.*
+frontend/.env
+backend/.env

@@ -8,10 +8,12 @@
     "build:backend": "cd backend && npm run build || true",
     "build:all": "npm run build:frontend && npm run build:backend",
     "dev": "concurrently \"cd backend && npm run dev\" \"cd frontend && npm run dev\"",
-    "e2e": "npx playwright test"
+    "e2e:browsers": "npx playwright install --with-deps",
+    "e2e": "npx playwright test -c tests/e2e/playwright.config.js"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",
-    "node-fetch": "^2.6.7"
+    "node-fetch": "^2.6.7",
+    "@playwright/test": "^1.48.0"
   }
 }

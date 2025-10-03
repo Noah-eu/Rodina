@@ -14,3 +14,6 @@ body,html,#root{height:100%;margin:0}
 .composer button{margin-left:8px;padding:8px 12px}
 .auth{max-width:420px;margin:80px auto;padding:24px;border:1px solid #eee;border-radius:12px}
 .auth form{display:flex;flex-direction:column;gap:8px}
+.call-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000}
+.overlay-card{background:#fff;padding:24px;border-radius:12px;min-width:240px;text-align:center}
+.overlay-card .buttons{display:flex;gap:12px;justify-content:center;margin-top:12px}
