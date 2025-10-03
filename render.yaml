@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: rodina-backend
+    env: node
+    plan: free
+    region: frankfurt
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 18
+      - key: UPLOADS_DIR
+        value: /opt/render/project/src/uploads
+      - key: PUSHER_APP_ID
+        sync: false
+      - key: PUSHER_KEY
+        sync: false
+      - key: PUSHER_SECRET
+        sync: false
+      - key: PUSHER_CLUSTER
+        sync: false
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: XIRSYS_CHANNEL
+        sync: false
+      - key: XIRSYS_REGION
+        value: global
+      - key: XIRSYS_BEARER
+        sync: false
+    disk:
+      name: uploads
+      mountPath: /opt/render/project/src/uploads
+      sizeGB: 1

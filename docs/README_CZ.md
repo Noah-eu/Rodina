@@ -19,7 +19,17 @@ Tím se spustí backend a frontend (skriptem `concurrently`). Backend běží na
 1. V Netlify vytvořte nový projekt z tohoto repozitáře.
 2. Build command: `npm run build:all`
 3. Publish directory: `frontend/dist`
-4. Pokud používáte externí backend, nastavte v Netlify proměnnou `VITE_API_URL` na URL backendu.
+4. V produkci nastavte v Netlify proměnnou `BACKEND_URL` na veřejnou URL backendu (např. z Renderu). Frontend volá API přes `/.netlify/functions/proxy`, která žádosti přesměruje na `BACKEND_URL`.
+
+### Backend na Render (doporučeno)
+
+1. V kořeni repa je `render.yaml`. Na https://render.com → New → Blueprint → vyberte repozitář → potvrďte.
+2. Po deploy získáte URL (např. `https://rodina-backend.onrender.com`).
+3. Tuto URL nastavte v Netlify jako `BACKEND_URL` a redeployněte web.
+
+Poznámky:
+- `UPLOADS_DIR` je nastaveno na persistentní disk, aby fotky/hlasy zůstaly zachované.
+- Přidejte do Renderu případné klíče (Pusher, VAPID, XIRSYS) dle potřeby.
 
 ## Správa PINů a profilů
 

@@ -28,7 +28,9 @@ const io = new Server(server, { cors: { origin: '*' } });
 
 app.use(cors());
 app.use(express.json());
-app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')))
+// uploads directory configurable (e.g., Render persistent disk)
+const uploadsDir = process.env.UPLOADS_DIR || path.join(__dirname, '..', 'uploads');
+app.use('/uploads', express.static(uploadsDir))
 
 const dbPath = path.join(__dirname, '..', 'db.json');
 let dbData = null;
@@ -49,11 +51,10 @@ function writeDB(){
 
 readDB();
 
-const upload = multer({ dest: path.join(__dirname, '..', 'uploads') });
-
 // ensure uploads dir exists
-const uploadsDir = path.join(__dirname, '..', 'uploads');
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+try { if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true }); } catch(e) {}
+
+const upload = multer({ dest: uploadsDir });
 
 // Pusher setup (server-side)
 const pusherEnabled = Boolean(process.env.PUSHER_APP_ID && process.env.PUSHER_KEY && process.env.PUSHER_SECRET && process.env.PUSHER_CLUSTER);
