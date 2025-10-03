@@ -1,5 +1,3 @@
-const fetch = require('node-fetch')
-
 exports.handler = async function(event) {
   // Základní proxy z Netlify Functions na náš backend server
   // Prefer BACKEND_URL, fallback VITE_API_URL, jinak localhost
