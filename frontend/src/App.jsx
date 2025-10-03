@@ -60,9 +60,17 @@ export default function App(){
     // ensure ICE config is loaded once
     if(!iceServersRef.current){
       try{
-        const res = await fetch(`${API}/api/ice`)
-        if(res.ok){ const data = await res.json(); iceServersRef.current = data.iceServers }
-      }catch(e){ /* ignore, fallback to default STUN */ }
+        // Prefer Netlify function in production
+        const fnUrl = '/.netlify/functions/ice'
+        const resFn = await fetch(fnUrl)
+        if(resFn.ok){ const data = await resFn.json(); iceServersRef.current = data.iceServers }
+      }catch(e){ }
+      if(!iceServersRef.current){
+        try{
+          const res = await fetch(`${API}/api/ice`)
+          if(res.ok){ const data = await res.json(); iceServersRef.current = data.iceServers }
+        }catch(e){ /* ignore, fallback to default STUN */ }
+      }
     }
     const pc = createPeerConnection({ socket, onTrack: (s)=>setRemoteStream(s), iceServers: iceServersRef.current||undefined })
     pcRef.current = pc
@@ -81,9 +89,16 @@ export default function App(){
     if(!incomingCall) return
     if(!iceServersRef.current){
       try{
-        const res = await fetch(`${API}/api/ice`)
-        if(res.ok){ const data = await res.json(); iceServersRef.current = data.iceServers }
+        const fnUrl = '/.netlify/functions/ice'
+        const resFn = await fetch(fnUrl)
+        if(resFn.ok){ const data = await resFn.json(); iceServersRef.current = data.iceServers }
       }catch(e){ }
+      if(!iceServersRef.current){
+        try{
+          const res = await fetch(`${API}/api/ice`)
+          if(res.ok){ const data = await res.json(); iceServersRef.current = data.iceServers }
+        }catch(e){ }
+      }
     }
     const pc = createPeerConnection({ socket, onTrack: (s)=>setRemoteStream(s), iceServers: iceServersRef.current||undefined })
     pcRef.current = pc

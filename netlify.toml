@@ -7,6 +7,11 @@
 
 [[redirects]]
   from = "/api/*"
-  to = "/.netlify/functions/server/:splat"
+  to = "/.netlify/functions/proxy/:splat"
   status = 200
   force = true
+
+[[redirects]]
+  from = "/.well-known/ice"
+  to = "/.netlify/functions/ice"
+  status = 200
