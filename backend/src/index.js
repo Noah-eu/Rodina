@@ -139,21 +139,56 @@ app.get('/api/ice', (req, res) => {
   res.json({ iceServers: [ { urls: 'stun:stun.l.google.com:19302' } ] })
 })
 
-app.post('/api/message', async (req, res) => {
-  const { from, text, type = 'text' } = req.body;
-  if (!from || !text) return res.status(400).json({ error: 'Neplatný vstup' });
+// Zprávy: text i přílohy (foto/video/audio)
+app.post('/api/message', upload.single('file'), async (req, res) => {
+  const isMultipart = req.is('multipart/form-data');
+  const from = isMultipart ? (req.body?.from) : req.body?.from;
+  if (!from) return res.status(400).json({ error: 'Neplatný vstup: chybí odesílatel' });
+
+  let msg = { id: nanoid(), from, ts: Date.now() };
+
+  if (isMultipart && req.file){
+    // Příloha
+    const mime = req.file.mimetype || '';
+    const url = `/uploads/${req.file.filename}`;
+    if (mime.startsWith('image/')){ msg.type = 'image'; msg.url = url; }
+    else if (mime.startsWith('video/')){ msg.type = 'video'; msg.url = url; }
+    else if (mime.startsWith('audio/')){ msg.type = 'audio'; msg.url = url; }
+    else { msg.type = 'file'; msg.url = url; msg.name = req.file.originalname; }
+    msg.text = req.body?.text || '';
+  } else {
+    // Čistě textová zpráva
+    const { text, type = 'text' } = req.body || {};
+    if (!text) return res.status(400).json({ error: 'Neplatný vstup: chybí text' });
+    msg = { ...msg, text, type };
+  }
+
   readDB();
-  const msg = { id: nanoid(), from, text, type, ts: Date.now() };
   dbData.messages.push(msg);
   writeDB();
   broadcast('message', msg);
+
   // Push oznámení
   const subs = Array.isArray(dbData.pushSubscriptions) ? dbData.pushSubscriptions : [];
+  const body = msg.type==='text' && msg.text ? msg.text
+    : msg.type==='image' ? 'Poslal(a) fotku'
+    : msg.type==='video' ? 'Poslal(a) video'
+    : msg.type==='audio' ? 'Poslal(a) hlasovou zprávu'
+    : 'Nová zpráva';
   for (const sub of subs){
-    try{ await webpush.sendNotification(sub, JSON.stringify({ title: 'FamCall', body: text })) }catch(e){}
+    try{ await webpush.sendNotification(sub, JSON.stringify({ title: 'Rodina', body })) }catch(e){}
   }
   res.json(msg);
 });
+
+// Seznam zpráv (posledních N)
+app.get('/api/messages', (req, res)=>{
+  const limit = Math.max(1, Math.min(500, parseInt(req.query.limit||'100',10)));
+  readDB();
+  const all = dbData.messages || [];
+  const slice = all.slice(-limit);
+  res.json(slice);
+})
 
 // Presence update endpoint (explicit)
 app.post('/api/presence', (req, res)=>{
@@ -231,7 +266,17 @@ app.get('/api/ice', async (req, res) => {
 app.post('/api/rt/offer', (req, res)=>{ broadcast('webrtc_offer', { sdp: req.body?.sdp }); res.json({ ok: true }) })
 app.post('/api/rt/answer', (req, res)=>{ broadcast('webrtc_answer', { sdp: req.body?.sdp }); res.json({ ok: true }) })
 app.post('/api/rt/ice', (req, res)=>{ broadcast('webrtc_ice', { candidate: req.body?.candidate }); res.json({ ok: true }) })
-app.post('/api/call', (req, res)=>{ broadcast('incoming_call', req.body || {}); res.json({ ok: true }) })
+app.post('/api/call', async (req, res)=>{
+  const info = req.body || {};
+  broadcast('incoming_call', info);
+  // Push oznámení o příchozím hovoru
+  readDB();
+  const subs = Array.isArray(dbData.pushSubscriptions) ? dbData.pushSubscriptions : [];
+  for (const sub of subs){
+    try{ await webpush.sendNotification(sub, JSON.stringify({ title: 'Rodina', body: 'Příchozí hovor' })) }catch(e){}
+  }
+  res.json({ ok: true })
+})
 
 // Web Push: get VAPID public key and subscribe
 app.get('/api/push/publicKey', (req, res)=>{

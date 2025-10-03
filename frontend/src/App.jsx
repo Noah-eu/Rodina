@@ -17,6 +17,9 @@ export default function App(){
   const [users, setUsers] = useState([])
   const [messages, setMessages] = useState([])
   const [text, setText] = useState('')
+  const [file, setFile] = useState(null)
+  const [recorder, setRecorder] = useState(null)
+  const [recording, setRecording] = useState(false)
   const [localStream, setLocalStream] = useState(null)
   const [remoteStream, setRemoteStream] = useState(null)
   const [incomingCall, setIncomingCall] = useState(null)
@@ -68,9 +71,38 @@ export default function App(){
 
   async function send(){
     if(!user) return alert('Přihlašte se')
-    await axios.post(`${API}/api/message`, { from: user.id, text })
+    if (file){
+      const form = new FormData()
+      form.append('from', user.id)
+      form.append('file', file)
+      if (text) form.append('text', text)
+      await fetch(`${API}/api/message`, { method: 'POST', body: form })
+      setFile(null)
+    } else {
+      await axios.post(`${API}/api/message`, { from: user.id, text })
+    }
     setText('')
   }
+
+  async function startVoice(){
+    try{
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const rec = new MediaRecorder(stream)
+      const chunks = []
+      rec.ondataavailable = e=>{ if(e.data.size) chunks.push(e.data) }
+      rec.onstop = async ()=>{
+        const blob = new Blob(chunks, { type: 'audio/webm' })
+        const form = new FormData()
+        form.append('from', user.id)
+        form.append('file', blob, 'voice.webm')
+        await fetch(`${API}/api/message`, { method: 'POST', body: form })
+        stream.getTracks().forEach(t=>t.stop())
+      }
+      rec.start()
+      setRecorder(rec); setRecording(true)
+    }catch(e){ alert('Mikrofon nedostupný: '+e.message) }
+  }
+  function stopVoice(){ if(recorder){ recorder.stop(); setRecording(false); setRecorder(null) } }
 
   async function startCall(type='video'){
     if(!user) return
@@ -95,9 +127,10 @@ export default function App(){
       const stream = await navigator.mediaDevices.getUserMedia({ video: type==='video', audio: true })
       setLocalStream(stream)
       stream.getTracks().forEach(t=>pc.addTrack(t, stream))
-      const offer = await pc.createOffer()
-      await pc.setLocalDescription(offer)
-      socket.emit('webrtc_offer', { sdp: pc.localDescription })
+  const offer = await pc.createOffer()
+  await pc.setLocalDescription(offer)
+  // REST signaling pro produkci (Pusher)
+  try{ await fetch('/.netlify/functions/proxy/api/rt/offer', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ sdp: pc.localDescription }) }) }catch(e){ socket.emit('webrtc_offer', { sdp: pc.localDescription }) }
       setInCall(true)
     }catch(e){ alert('Nelze získat média: '+e.message) }
   }
@@ -124,9 +157,9 @@ export default function App(){
       setLocalStream(stream)
       stream.getTracks().forEach(t=>pc.addTrack(t, stream))
       await pc.setRemoteDescription(incomingCall.sdp)
-      const answer = await pc.createAnswer()
-      await pc.setLocalDescription(answer)
-      socket.emit('webrtc_answer', { sdp: pc.localDescription })
+  const answer = await pc.createAnswer()
+  await pc.setLocalDescription(answer)
+  try{ await fetch('/.netlify/functions/proxy/api/rt/answer', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ sdp: pc.localDescription }) }) }catch(e){ socket.emit('webrtc_answer', { sdp: pc.localDescription }) }
       setInCall(true)
       stopRingtone()
       setIncomingCall(null)
@@ -198,12 +231,17 @@ export default function App(){
         <div className="messages">
           {messages.map(m=> (
             <div key={m.id} className={m.from===user.id? 'me':'them'}>
-              <div className="msg-text">{m.text}</div>
+              {m.type==='image' && <img src={m.url} alt="foto" style={{maxWidth:'60%'}} />}
+              {m.type==='video' && <video src={m.url} controls style={{maxWidth:'60%'}} />}
+              {m.type==='audio' && <audio src={m.url} controls />}
+              {(!m.type || m.type==='text') && <div className="msg-text">{m.text}</div>}
             </div>
           ))}
         </div>
         <div className="composer">
           <input value={text} onChange={e=>setText(e.target.value)} placeholder="Napište zprávu..." />
+          <input type="file" onChange={e=>setFile(e.target.files?.[0]||null)} />
+          {!recording ? <button onClick={startVoice}>🎤 Hlasovka</button> : <button onClick={stopVoice}>⏹️ Stop</button>}
           <button onClick={send}>Odeslat</button>
         </div>
       </main>
