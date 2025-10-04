@@ -182,6 +182,11 @@ app.post('/api/message', upload.single('file'), async (req, res) => {
 
   if (isMultipart && req.file){
     // Příloha
+    if (req.file.size === 0) {
+      // Smazat prázdný soubor, pokud vznikl
+      try { fs.unlinkSync(req.file.path); } catch(e){}
+      return res.status(400).json({ error: 'Prázdný soubor, hlasovka nebyla uložena.' });
+    }
     const mime = req.file.mimetype || '';
     const url = `/uploads/${req.file.filename}`;
     if (mime.startsWith('image/')){ msg.type = 'image'; msg.url = url; }
