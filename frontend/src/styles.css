@@ -1,3 +1,8 @@
+/* Call tlačítka v sidebaru: na mobilu skryto, na desktopu viditelné */
+.sidebar-call-btns{display:none}
+@media (min-width: 820px){
+	.sidebar-call-btns{display:flex;gap:6px;}
+}
 /* Mobile-first, dark-ish theme */
 :root{--bg:#0f172a;--panel:#0b1226;--muted:#334155;--text:#e2e8f0;--brand:#4f46e5;--brand2:#22c55e;--danger:#ef4444}
 *{box-sizing:border-box;font-family:Inter,system-ui,Arial,sans-serif}
@@ -24,6 +29,7 @@ body{background:var(--bg);color:var(--text);overflow:hidden}
 .composer input[type=file]{max-width:160px;color:var(--text)}
 .composer button{padding:10px 14px;border:none;border-radius:10px;background:var(--brand);color:#fff}
 .composer button:hover{filter:brightness(1.06)}
+.list-actions{display:none}
 .auth{max-width:420px;margin:40px auto;padding:24px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:#0e1731}
 .auth form{display:flex;flex-direction:column;gap:8px}
 .call-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:1000}
@@ -36,4 +42,5 @@ body{background:var(--bg);color:var(--text);overflow:hidden}
 @media (min-width: 820px){
 	.app{flex-direction:row}
 	.sidebar{width:320px;border-right:1px solid rgba(255,255,255,.08);border-bottom:none}
+  .list-actions{display:flex; gap:6px; margin-left:auto}
 }

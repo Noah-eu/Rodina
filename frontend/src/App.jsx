@@ -42,6 +42,7 @@ export default function App(){
   const iceServersRef = React.useRef(null)
   const localVideoRef = React.useRef()
   const remoteVideoRef = React.useRef()
+  const messagesBoxRef = React.useRef(null)
 
   useEffect(()=>{
     fetchUsers()
@@ -69,9 +70,8 @@ export default function App(){
   useEffect(()=>{ if(remoteVideoRef.current && remoteStream) remoteVideoRef.current.srcObject = remoteStream }, [remoteStream])
   useEffect(()=>{ if(localVideoRef.current && localStream) localVideoRef.current.srcObject = localStream }, [localStream])
 
-  // Polling fallback if realtime (Pusher) isn't configured server-side
+  // Vynucený polling (uživatelé i zprávy) každých 5s/2s i s Pusherem
   useEffect(()=>{
-    if(channel) return
     if(!user) return
     const pu = setInterval(()=>{ fetchUsers().catch(()=>{}) }, 5000)
     const poll = async ()=>{
@@ -85,6 +85,14 @@ export default function App(){
     const pm = setInterval(poll, 2000)
     return ()=>{ clearInterval(pu); clearInterval(pm) }
   }, [user, selected?.id])
+
+  // Autoscroll messages to bottom when conversation nebo list changes
+  useEffect(()=>{
+    try{
+      const el = messagesBoxRef.current
+      if(el){ el.scrollTop = el.scrollHeight }
+    }catch(_){ }
+  }, [messages.length, selected?.id])
 
   async function fetchUsers(){
     const res = await axios.get(api('/api/users'))
@@ -118,38 +126,54 @@ export default function App(){
       if (text) form.append('text', text)
       const resp = await fetch(api('/api/message'), { method: 'POST', body: form })
       const sent = await resp.json().catch(()=>null)
-      if(sent?.id){ setMessages(m=> [...m, { ...sent, delivered: true }]) }
       setFile(null)
     } else {
-      const { data: sent } = await axios.post(api('/api/message'), { from: user.id, to: selected.id, text })
-      if(sent?.id){ setMessages(m=> [...m, { ...sent, delivered: true }]) }
+      await axios.post(api('/api/message'), { from: user.id, to: selected.id, text })
     }
     setText('')
+    // Refetch conversation to ensure sync
+    try{
+      const qs = `?me=${encodeURIComponent(user.id)}&peer=${encodeURIComponent(selected.id)}&limit=200`
+      const res = await fetch(api('/api/messages')+qs)
+      if(res.ok){ const list = await res.json(); setMessages(list) }
+    }catch(_){ }
   }
 
   async function startVoice(){
     try{
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-  const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : (MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '')
-  const rec = new MediaRecorder(stream, mime? { mimeType: mime }: undefined)
+      let mime = ''
+      if(MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) mime = 'audio/webm;codecs=opus'
+      else if(MediaRecorder.isTypeSupported('audio/webm')) mime = 'audio/webm'
+      else if(MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) mime = 'audio/ogg;codecs=opus'
+      const rec = new MediaRecorder(stream, mime? { mimeType: mime }: undefined)
       const chunks = []
       rec.ondataavailable = e=>{ if(e.data.size) chunks.push(e.data) }
       rec.onstop = async ()=>{
-        const blob = new Blob(chunks, { type: 'audio/webm' })
+        if(!chunks.length){
+          stream.getTracks().forEach(t=>t.stop())
+          alert('Hlasová zpráva je prázdná, zkuste to znovu.')
+          return
+        }
+        const blob = new Blob(chunks, { type: rec.mimeType || mime || 'audio/webm' })
         const form = new FormData()
         form.append('from', user.id)
         if (selected?.id) form.append('to', selected.id)
         form.append('file', blob, 'voice.webm')
-        const resp = await fetch(api('/api/message'), { method: 'POST', body: form })
-        const sent = await resp.json().catch(()=>null)
-        if(sent?.id){ setMessages(m=> [...m, { ...sent, delivered: true }]) }
+        await fetch(api('/api/message'), { method: 'POST', body: form })
         stream.getTracks().forEach(t=>t.stop())
+        // Po odeslání refetch
+        try{
+          const qs = `?me=${encodeURIComponent(user.id)}&peer=${encodeURIComponent(selected.id)}&limit=200`
+          const res = await fetch(api('/api/messages')+qs)
+          if(res.ok){ const list = await res.json(); setMessages(list) }
+        }catch(_){ }
       }
-      rec.start()
+      rec.start(200)
       setRecorder(rec); setRecording(true)
     }catch(e){ alert('Mikrofon nedostupný: '+e.message) }
   }
-  function stopVoice(){ if(recorder){ setTimeout(()=>{ try{ recorder.stop() }catch(_){} }, 100); setRecording(false); setRecorder(null) } }
+  function stopVoice(){ if(recorder){ setTimeout(()=>{ try{ recorder.stop() }catch(_){} }, 200); setRecording(false); setRecorder(null) } }
 
   // Typing indicator
   useEffect(()=>{
@@ -257,9 +281,10 @@ export default function App(){
                 <div className="name">{u.name}</div>
                 <div className="last">{u.online? 'Online':'Offline'}</div>
               </div>
-              <div>
-                <button onClick={()=>startCall('video', u.id)}>Video</button>
-                <button onClick={()=>startCall('audio', u.id)}>Hovor</button>
+              {/* Call tlačítka pouze na desktopu, na mobilu skryto přes CSS */}
+              <div className="sidebar-call-btns">
+                <button onClick={e=>{e.stopPropagation();startCall('video', u.id)}}>Video</button>
+                <button onClick={e=>{e.stopPropagation();startCall('audio', u.id)}}>Hovor</button>
               </div>
             </li>
           ))}
@@ -297,7 +322,7 @@ export default function App(){
           <video ref={localVideoRef} autoPlay playsInline muted style={{width:120,position:'absolute',right:16,top:16}}></video>
           <div className="call-controls"><button onClick={endCall}>Ukončit</button></div>
         </div>}
-        <div className="messages">
+        <div className="messages" ref={messagesBoxRef}>
           {messages
             .filter(m=> !selected || (m.to? ((m.from===user.id && m.to===selected.id) || (m.from===selected.id && m.to===user.id)) : true))
             .map(m=> (
