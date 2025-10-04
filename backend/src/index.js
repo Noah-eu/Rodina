@@ -104,11 +104,18 @@ ensureVapid();
 
 app.post('/api/register', upload.single('avatar'), async (req, res) => {
   const { name, pin } = req.body;
-  if (!name || !pin || pin.length !== 4) return res.status(400).json({ error: 'Neplatný vstup' });
+  console.log('[REGISTER] vstup:', { name, pin });
+  if (!name || !pin || pin.length !== 4) {
+    console.log('[REGISTER] Neplatný vstup');
+    return res.status(400).json({ error: 'Neplatný vstup' });
+  }
   readDB();
   const norm = String(name).trim().toLowerCase();
   const existing = dbData.users.find(u => (u.nameNorm || (u.name||'').toLowerCase()) === norm);
-  if (existing) return res.status(400).json({ error: 'Uživatel již existuje' });
+  if (existing) {
+    console.log('[REGISTER] Uživatel již existuje:', existing);
+    return res.status(400).json({ error: 'Uživatel již existuje' });
+  }
   const salt = await bcrypt.genSalt(10);
   const hash = await bcrypt.hash(pin, salt);
   const id = nanoid();
@@ -116,28 +123,42 @@ app.post('/api/register', upload.single('avatar'), async (req, res) => {
   const user = { id, name, nameNorm: norm, pinHash: hash, avatar, online: true };
   dbData.users.push(user);
   writeDB();
+  console.log('[REGISTER] Uživatel uložen:', user);
   broadcast('presence', { id, online: true });
   res.json({ id, name, avatar });
 });
 
 app.post('/api/login', async (req, res) => {
   const { id, name, pin } = req.body || {};
-  if ((!name && !id) || !pin) return res.status(400).json({ error: 'Neplatný vstup' });
+  console.log('[LOGIN] vstup:', { id, name, pin });
+  if ((!name && !id) || !pin) {
+    console.log('[LOGIN] Neplatný vstup');
+    return res.status(400).json({ error: 'Neplatný vstup' });
+  }
   readDB();
   let user = null;
   if (id) {
     user = dbData.users.find(u => u.id === id);
+    console.log('[LOGIN] Hledám podle ID:', id, 'Nalezen:', user);
   }
   // Pokud není user podle ID, nebo není ID, zkusíme podle jména (case-insensitive)
   if (!user && name) {
     const norm = String(name).trim().toLowerCase();
     user = dbData.users.find(u => (u.nameNorm || (u.name||'').toLowerCase()) === norm);
+    console.log('[LOGIN] Hledám podle jména:', norm, 'Nalezen:', user);
   }
-  if (!user) return res.status(404).json({ error: 'Uživatel nenalezen' });
+  if (!user) {
+    console.log('[LOGIN] Uživatel nenalezen');
+    return res.status(404).json({ error: 'Uživatel nenalezen' });
+  }
   const match = await bcrypt.compare(pin, user.pinHash);
-  if (!match) return res.status(401).json({ error: 'Špatný PIN' });
+  if (!match) {
+    console.log('[LOGIN] Špatný PIN');
+    return res.status(401).json({ error: 'Špatný PIN' });
+  }
   user.online = true;
   writeDB();
+  console.log('[LOGIN] Přihlášení OK:', user);
   broadcast('presence', { id: user.id, online: true });
   res.json({ id: user.id, name: user.name, avatar: user.avatar });
 });
