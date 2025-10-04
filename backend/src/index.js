@@ -107,7 +107,7 @@ app.post('/api/register', upload.single('avatar'), async (req, res) => {
   if (!name || !pin || pin.length !== 4) return res.status(400).json({ error: 'Neplatný vstup' });
   readDB();
   const norm = String(name).trim().toLowerCase();
-  const existing = dbData.users.find(u => (u.nameNorm || u.name?.toLowerCase?.()) === norm);
+  const existing = dbData.users.find(u => (u.nameNorm || (u.name||'').toLowerCase()) === norm);
   if (existing) return res.status(400).json({ error: 'Uživatel již existuje' });
   const salt = await bcrypt.genSalt(10);
   const hash = await bcrypt.hash(pin, salt);
@@ -127,9 +127,11 @@ app.post('/api/login', async (req, res) => {
   let user = null;
   if (id) {
     user = dbData.users.find(u => u.id === id);
-  } else {
+  }
+  // Pokud není user podle ID, nebo není ID, zkusíme podle jména (case-insensitive)
+  if (!user && name) {
     const norm = String(name).trim().toLowerCase();
-    user = dbData.users.find(u => (u.nameNorm || u.name?.toLowerCase?.()) === norm);
+    user = dbData.users.find(u => (u.nameNorm || (u.name||'').toLowerCase()) === norm);
   }
   if (!user) return res.status(404).json({ error: 'Uživatel nenalezen' });
   const match = await bcrypt.compare(pin, user.pinHash);
