@@ -33,7 +33,15 @@ const uploadsDir = process.env.UPLOADS_DIR || path.join(__dirname, '..', 'upload
 app.use('/uploads', express.static(uploadsDir))
 
 // Data dir (use persistent disk if configured)
-const dataDir = process.env.DATA_DIR || uploadsDir;
+// Prefer DATA_DIR; fallback to uploadsDir; avoid unwritable /data on Render
+let dataDir = process.env.DATA_DIR || uploadsDir;
+try {
+  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+} catch (e) {
+  // Fallback to uploadsDir if creating DATA_DIR fails
+  dataDir = uploadsDir;
+  try { if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true }); } catch(_){}
+}
 try { if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true }); } catch(e) {}
 const dbPath = path.join(dataDir, 'db.json');
 let dbData = null;

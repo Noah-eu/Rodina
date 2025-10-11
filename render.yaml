@@ -10,7 +10,7 @@ services:
     autoDeploy: true
     envVars:
       - key: NODE_VERSION
-        value: 18
+        value: 20
       - key: UPLOADS_DIR
         value: /opt/render/project/src/uploads
       - key: PUSHER_APP_ID
@@ -31,6 +31,8 @@ services:
         value: global
       - key: XIRSYS_BEARER
         sync: false
+      - key: DATA_DIR
+        value: /opt/render/project/src/uploads
     disk:
       name: uploads
       mountPath: /opt/render/project/src/uploads
