@@ -27,6 +27,26 @@ if (import.meta.env.VITE_PUSHER_KEY && import.meta.env.VITE_PUSHER_CLUSTER){
 
 export default function App(){
   const [user, setUser] = useState(null)
+
+  useEffect(() => {
+    const storedUser = localStorage.getItem('rodina:user')
+    if (storedUser) {
+      setUser(JSON.parse(storedUser))
+    }
+  }, [])
+
+  const handleAuth = (u) => {
+    localStorage.setItem('rodina:user', JSON.stringify(u))
+    setUser(u)
+  }
+
+  const handleLogout = () => {
+    localStorage.removeItem('rodina:user')
+    localStorage.removeItem('rodina:lastUserId')
+    setUser(null)
+    setStage('choose')
+  }
+
   const [users, setUsers] = useState([])
   const [messages, setMessages] = useState([])
   const [selected, setSelected] = useState(null)
@@ -270,7 +290,7 @@ export default function App(){
   }
   function stopRingtone(){ try{ oscRef.current?.o.stop(); oscRef.current=null; setRinging(false) }catch(e){} }
 
-  if(!user) return <Auth onAuth={u=>setUser(u)} />
+  if(!user) return <Auth onAuth={handleAuth} />
 
   return (
     <div className="app">
