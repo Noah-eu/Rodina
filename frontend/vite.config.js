@@ -5,6 +5,6 @@ export default defineConfig({
   plugins: [react()],
   define: {
     'process.env': {},
-    __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+    __BUILD_TIME__: JSON.stringify(Date.now()),
   }
 })

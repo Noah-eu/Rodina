@@ -1,5 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import axios from 'axios'
+import { db } from './firebase'
+import { collection, doc, getDoc, getDocs, query, where, setDoc } from 'firebase/firestore'
+import bcrypt from 'bcryptjs'
 import io from 'socket.io-client'
 import Pusher from 'pusher-js'
 import { createPeerConnection } from './webrtc'
@@ -361,13 +364,21 @@ function Auth({onAuth}){
 
   async function register(e){
     e.preventDefault()
-    const form = new FormData()
-    form.append('name', name)
-    form.append('pin', pin)
-    if (avatarRef.current?.files?.[0]) form.append('avatar', avatarRef.current.files[0])
-    await fetch(api('/api/register'), { method: 'POST', body: form })
-    const res = await fetch(api('/api/login'), { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name, pin })})
-    if(res.ok){ const user = await res.json(); localStorage.setItem('rodina:lastName', name); localStorage.setItem('rodina:lastUserId', user.id); localStorage.setItem('rodina:lastStage','pin'); onAuth(user) }
+    // Firebase registrace: unikátní jméno, uložení hashovaného PINu
+    const usersCol = collection(db, 'users')
+    const q = query(usersCol, where('nameNorm', '==', String(name).trim().toLowerCase()))
+    const snap = await getDocs(q)
+    if(!snap.empty){ alert('Uživatel již existuje'); return }
+    const id = (crypto?.randomUUID?.() || Math.random().toString(36).slice(2))
+    const salt = bcrypt.genSaltSync(10)
+    const pinHash = bcrypt.hashSync(pin, salt)
+    const userDoc = doc(db, 'users', id)
+    const user = { id, name, nameNorm: String(name).trim().toLowerCase(), pinHash, avatar: null, createdAt: Date.now() }
+    await setDoc(userDoc, user)
+    localStorage.setItem('rodina:lastName', name)
+    localStorage.setItem('rodina:lastUserId', id)
+    localStorage.setItem('rodina:lastStage','pin')
+    onAuth({ id, name, avatar: null })
   }
 
   if(stage==='login' || stage==='pin') {
@@ -380,26 +391,29 @@ function Auth({onAuth}){
         <h2>Přihlášení</h2>
         <form onSubmit={async (e)=>{
           e.preventDefault();
-          let payload;
+          // Firebase login: podle ID+PIN nebo jméno+PIN
+          let userId = null
+          let userName = null
           if(stage==='pin'){
-            if(lastUserId){
-              payload = { id: lastUserId, pin };
-            } else {
-              payload = { name, pin };
-            }
-          } else {
-            payload = { name, pin };
+            if(lastUserId){ userId = lastUserId } else { userName = name }
+          } else { userName = name }
+          let userData = null
+          if(userId){
+            const d = await getDoc(doc(db, 'users', userId))
+            if(d.exists()) userData = d.data()
+          } else if(userName){
+            const usersCol = collection(db, 'users')
+            const q = query(usersCol, where('nameNorm', '==', String(userName).trim().toLowerCase()))
+            const snap = await getDocs(q)
+            if(!snap.empty){ userData = snap.docs[0].data() }
           }
-          const res = await fetch(api('/api/login'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
-          if(res.ok){
-            const u = await res.json();
-            localStorage.setItem('rodina:lastName', u.name);
-            localStorage.setItem('rodina:lastUserId', u.id);
-            localStorage.setItem('rodina:lastStage','pin');
-            onAuth(u);
-          } else {
-            alert('Chybný PIN nebo uživatel');
-          }
+          if(!userData){ alert('Uživatel nenalezen'); return }
+          const ok = bcrypt.compareSync(pin, userData.pinHash)
+          if(!ok){ alert('Chybný PIN'); return }
+          localStorage.setItem('rodina:lastName', userData.name)
+          localStorage.setItem('rodina:lastUserId', userData.id)
+          localStorage.setItem('rodina:lastStage','pin')
+          onAuth({ id: userData.id, name: userData.name, avatar: userData.avatar || null })
         }}>
           {(stage!=='pin' || needName) && (
             <input placeholder="Jméno" value={name} onChange={e=>setName(e.target.value)} />
