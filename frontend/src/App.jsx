@@ -370,17 +370,47 @@ function Auth({onAuth}){
     if(res.ok){ const user = await res.json(); localStorage.setItem('rodina:lastName', name); localStorage.setItem('rodina:lastUserId', user.id); localStorage.setItem('rodina:lastStage','pin'); onAuth(user) }
   }
 
-  if(stage==='login' || stage==='pin') return (
-    <div className="auth">
-      <h2>Přihlášení</h2>
-      <form onSubmit={async (e)=>{ e.preventDefault(); const payload = stage==='pin'? { id: localStorage.getItem('rodina:lastUserId')||undefined, name: localStorage.getItem('rodina:lastName')||name, pin }: { name, pin }; const res = await fetch(api('/api/login'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)}); if(res.ok){ const u = await res.json(); localStorage.setItem('rodina:lastName', u.name); localStorage.setItem('rodina:lastUserId', u.id); localStorage.setItem('rodina:lastStage','pin'); onAuth(u) } else { alert('Chybný PIN nebo uživatel') } }}>
-        {stage!=='pin' && <input placeholder="Jméno" value={name} onChange={e=>setName(e.target.value)} />}
-        <input placeholder="4-místný PIN" value={pin} onChange={e=>setPin(e.target.value)} />
-        <button type="submit">Přihlásit</button>
-      </form>
-      <p><button onClick={()=>setStage('choose')}>Založit nový profil</button></p>
-    </div>
-  )
+  if(stage==='login' || stage==='pin') {
+    // Pro "Jen PIN" zobrazit pole pro jméno, pokud není ID v localStorage
+    const lastUserId = localStorage.getItem('rodina:lastUserId') || '';
+    const lastName = localStorage.getItem('rodina:lastName') || '';
+    const needName = stage==='pin' && !lastUserId;
+    return (
+      <div className="auth">
+        <h2>Přihlášení</h2>
+        <form onSubmit={async (e)=>{
+          e.preventDefault();
+          let payload;
+          if(stage==='pin'){
+            if(lastUserId){
+              payload = { id: lastUserId, pin };
+            } else {
+              payload = { name, pin };
+            }
+          } else {
+            payload = { name, pin };
+          }
+          const res = await fetch(api('/api/login'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+          if(res.ok){
+            const u = await res.json();
+            localStorage.setItem('rodina:lastName', u.name);
+            localStorage.setItem('rodina:lastUserId', u.id);
+            localStorage.setItem('rodina:lastStage','pin');
+            onAuth(u);
+          } else {
+            alert('Chybný PIN nebo uživatel');
+          }
+        }}>
+          {(stage!=='pin' || needName) && (
+            <input placeholder="Jméno" value={name} onChange={e=>setName(e.target.value)} />
+          )}
+          <input placeholder="4-místný PIN" value={pin} onChange={e=>setPin(e.target.value)} />
+          <button type="submit">Přihlásit</button>
+        </form>
+        <p><button onClick={()=>setStage('choose')}>Založit nový profil</button></p>
+      </div>
+    );
+  }
 
   return (
     <div className="auth">
