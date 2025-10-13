@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import axios from 'axios'
-import { db } from './firebase'
+import { db, ensureAuth } from './firebase'
 import { collection, doc, getDoc, getDocs, query, where, setDoc } from 'firebase/firestore'
 import bcrypt from 'bcryptjs'
 import io from 'socket.io-client'
@@ -364,6 +364,7 @@ function Auth({onAuth}){
 
   async function register(e){
     e.preventDefault()
+    await ensureAuth
     // Firebase registrace: unikátní jméno, uložení hashovaného PINu
     const usersCol = collection(db, 'users')
     const q = query(usersCol, where('nameNorm', '==', String(name).trim().toLowerCase()))
@@ -391,6 +392,7 @@ function Auth({onAuth}){
         <h2>Přihlášení</h2>
         <form onSubmit={async (e)=>{
           e.preventDefault();
+          await ensureAuth
           // Firebase login: podle ID+PIN nebo jméno+PIN
           let userId = null
           let userName = null
