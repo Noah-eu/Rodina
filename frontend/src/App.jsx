@@ -419,7 +419,7 @@ function Auth({onAuth}){
             <input placeholder="Jméno" value={name} onChange={e=>setName(e.target.value)} />
           )}
           <input placeholder="4-místný PIN" value={pin} onChange={e=>setPin(e.target.value)} />
-          <button type="submit">Přihlásit</button>
+          <button className="btn primary" type="submit">Přihlásit</button>
         </form>
         <p><button onClick={()=>setStage('choose')}>Založit nový profil</button></p>
       </div>
@@ -433,9 +433,9 @@ function Auth({onAuth}){
         <input placeholder="Jméno" value={name} onChange={e=>setName(e.target.value)} />
         <input placeholder="4-místný PIN" value={pin} onChange={e=>setPin(e.target.value)} />
         <input type="file" name="avatar" ref={avatarRef} />
-        <button type="submit">Vytvořit profil</button>
+        <button className="btn primary" type="submit">Vytvořit profil</button>
       </form>
-      <p>Máte už profil? <button onClick={()=>setStage('login')}>Přihlásit se</button> <button onClick={()=>setStage('pin')}>Jen PIN</button></p>
+      <p>Máte už profil? <button className="btn secondary" onClick={()=>setStage('login')}>Přihlásit se</button> <button className="btn secondary" onClick={()=>setStage('pin')}>Jen PIN</button></p>
     </div>
   )
 }
