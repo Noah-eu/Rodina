@@ -81,10 +81,12 @@ body { background: var(--bg); color: var(--text); -webkit-font-smoothing: antial
 .message.own .msg-time { text-align:right; }
 
 /* Composer */
-.send-form { display:flex; gap:14px; padding: 18px 18px calc(18px + env(safe-area-inset-bottom)); background: var(--panel); border-top:1px solid var(--border); align-items:center; box-shadow:0 -4px 14px -6px rgba(0,0,0,.5); }
-.send-form input { flex:1; background: var(--panel-alt); border:1px solid var(--border); color: var(--text); padding: 16px 18px; border-radius: 18px; font-size:16px; outline:none; transition: border-color .2s, background .2s; }
+.send-form { display:flex; gap:10px; padding: 14px 14px calc(14px + env(safe-area-inset-bottom)); background: var(--panel); border-top:1px solid var(--border); align-items:center; box-shadow:0 -4px 14px -6px rgba(0,0,0,.5); flex-wrap:wrap; }
+.send-form > div.preview-strip { order:0; flex-basis:100%; display:flex; gap:8px; overflow-x:auto; padding-bottom:4px; }
+.send-form > div.preview-strip img { width:70px; height:auto; border-radius:12px; border:1px solid #344250; flex-shrink:0; }
+.send-form input { flex:1; min-width:140px; background: var(--panel-alt); border:1px solid var(--border); color: var(--text); padding: 14px 16px; border-radius: 16px; font-size:15px; outline:none; transition: border-color .2s, background .2s; }
 .send-form input:focus { border-color: var(--brand); background:#2b3442; }
-.send-form button { background: linear-gradient(135deg,#6366f1,#818cf8); border:none; color:#fff; font-weight:600; font-size:16px; padding:16px 26px; border-radius:18px; cursor:pointer; display:flex; align-items:center; gap:8px; box-shadow:0 4px 14px -4px rgba(0,0,0,.6); transition: filter .2s, transform .18s; }
+.send-form button { background: linear-gradient(135deg,#6366f1,#818cf8); border:none; color:#fff; font-weight:600; font-size:15px; padding:14px 20px; border-radius:16px; cursor:pointer; display:flex; align-items:center; gap:6px; box-shadow:0 4px 14px -4px rgba(0,0,0,.6); transition: filter .2s, transform .18s; }
 .send-form button:hover { filter:brightness(1.08); }
 .send-form button:active { transform: translateY(1px); }
 

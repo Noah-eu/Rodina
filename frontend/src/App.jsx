@@ -155,7 +155,7 @@ function ChatWindow({ user, selectedUser }) {
           </div>
         )}
         <input value={input} onChange={e => setInput(e.target.value)} placeholder="Napište zprávu..." autoFocus />
-        <input type="file" accept="image/*" onChange={e => {
+        <input id="chat-image-input" style={{display:'none'}} type="file" accept="image/*" onChange={e => {
           const f = e.target.files?.[0]
           if (f) {
             setImageFile(f)
@@ -164,7 +164,8 @@ function ChatWindow({ user, selectedUser }) {
             reader.readAsDataURL(f)
           }
         }} />
-        <button type="submit" disabled={sending}>{sending ? 'Odesílám...' : 'Odeslat'}</button>
+        <button type="button" onClick={() => document.getElementById('chat-image-input').click()} style={{background:'#2a3442',border:'1px solid #344250',color:'#e6edf3',width:48,height:48,borderRadius:14,cursor:'pointer',fontSize:'22px',display:'flex',alignItems:'center',justifyContent:'center'}} title="Připojit obrázek">📎</button>
+        <button type="submit" disabled={sending} style={{minWidth:110}}>{sending ? 'Odesílám…' : 'Odeslat'}</button>
       </form>
     </div>
   )
@@ -234,6 +235,15 @@ export default function App() {
               if (Notification && Notification.permission === 'granted') {
                 try {
                   new Notification(`${d.name}: ${d.text || '🖼 Obrázek'}`, { body: 'Nová zpráva', icon: d.avatar || '/assets/default-avatar.png' })
+                  // Zvuková odezva
+                  try {
+                    const ctx = new (window.AudioContext || window.webkitAudioContext)()
+                    const o = ctx.createOscillator(); const g = ctx.createGain();
+                    o.type='sine'; o.frequency.value=880; o.connect(g); g.connect(ctx.destination);
+                    g.gain.setValueAtTime(0.001, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.01);
+                    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+                    o.start(); o.stop(ctx.currentTime + 0.25)
+                  } catch(e) { /* ignore audio errors */ }
                 } catch(e) { /* ignore */ }
               }
             }
