@@ -28,6 +28,7 @@ function ChatWindow({ user, selectedUser }) {
   const [imageFile, setImageFile] = useState(null)
   const [imagePreview, setImagePreview] = useState(null)
   const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState('')
   const messagesEndRef = useRef(null)
   const messagesContainerRef = useRef(null)
   const firstBatchLoadedRef = useRef(false)
@@ -99,6 +100,7 @@ function ChatWindow({ user, selectedUser }) {
     e.preventDefault()
     if (sending) return
     if (!input.trim() && !imageFile) return
+    setSendError('')
     setSending(true)
     let imageUrl = null
     try {
@@ -122,6 +124,7 @@ function ChatWindow({ user, selectedUser }) {
       setImagePreview(null)
     } catch (err) {
       console.error('Send failed:', err)
+      setSendError('Nepodařilo se odeslat zprávu. Zkuste to znovu.')
     } finally {
       setSending(false)
     }
@@ -147,7 +150,7 @@ function ChatWindow({ user, selectedUser }) {
         ))}
         <div ref={messagesEndRef} />
       </div>
-      <form className="send-form" onSubmit={sendMessage}>
+  <form className="send-form" onSubmit={sendMessage}>
         {imagePreview && (
           <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
             <img src={imagePreview} alt="preview" style={{maxWidth:120,borderRadius:12,border:'1px solid #344250'}} />
@@ -165,7 +168,8 @@ function ChatWindow({ user, selectedUser }) {
           }
         }} />
         <button type="button" onClick={() => document.getElementById('chat-image-input').click()} style={{background:'#2a3442',border:'1px solid #344250',color:'#e6edf3',width:48,height:48,borderRadius:14,cursor:'pointer',fontSize:'22px',display:'flex',alignItems:'center',justifyContent:'center'}} title="Připojit obrázek">📎</button>
-        <button type="submit" disabled={sending} style={{minWidth:110}}>{sending ? 'Odesílám…' : 'Odeslat'}</button>
+  <button type="submit" disabled={sending} style={{minWidth:110}}>{sending ? 'Odesílám…' : 'Odeslat'}</button>
+  {sendError && <div style={{color:'#dc2626',marginTop:8,fontSize:14}}>{sendError}</div>}
       </form>
     </div>
   )
