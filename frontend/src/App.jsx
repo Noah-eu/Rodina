@@ -106,7 +106,10 @@ function ChatWindow({ user, selectedUser }) {
     try {
       if (imageFile) {
         const imgRef = ref(storage, `chatImages/${roomId}/${Date.now()}_${imageFile.name}`)
-        const snap = await uploadBytes(imgRef, imageFile)
+        const snap = await uploadBytes(imgRef, imageFile, {
+          contentType: imageFile.type || 'application/octet-stream',
+          cacheControl: 'public, max-age=31536000, immutable'
+        })
         imageUrl = await getDownloadURL(snap.ref)
       }
       const msgsCol = collection(db, 'chats', roomId, 'messages')
@@ -345,7 +348,10 @@ function SettingsModal({ user, onAuth, onClose }) {
     try {
       await ensureAuth
       const storageRef = ref(storage, `avatars/${user.id}/${avatarFile.name}`)
-      const snapshot = await uploadBytes(storageRef, avatarFile)
+      const snapshot = await uploadBytes(storageRef, avatarFile, {
+        contentType: avatarFile.type || 'application/octet-stream',
+        cacheControl: 'public, max-age=31536000, immutable'
+      })
       const avatarUrl = await getDownloadURL(snapshot.ref)
 
       const userDocRef = doc(db, 'users', user.id)
@@ -423,7 +429,10 @@ function Auth({ onAuth }) {
       let avatarUrl = null
       if (avatarFile) {
         const storageRef = ref(storage, `avatars/${id}/${avatarFile.name}`)
-        const snapshot = await uploadBytes(storageRef, avatarFile)
+        const snapshot = await uploadBytes(storageRef, avatarFile, {
+          contentType: avatarFile.type || 'application/octet-stream',
+          cacheControl: 'public, max-age=31536000, immutable'
+        })
         avatarUrl = await getDownloadURL(snapshot.ref)
       }
 
