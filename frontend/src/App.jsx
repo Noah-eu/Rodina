@@ -3,6 +3,7 @@ import { db, ensureAuth, storage } from './firebase'
 import { collection, doc, getDoc, getDocs, query, where, setDoc, updateDoc } from 'firebase/firestore'
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 import bcrypt from 'bcryptjs'
+import { onSnapshot, orderBy, addDoc, serverTimestamp } from 'firebase/firestore'
 
 // Komponenta pro zobrazení jednoho uživatele v seznamu
 function UserListItem({ user, isSelected, onSelect }) {
@@ -14,6 +15,66 @@ function UserListItem({ user, isSelected, onSelect }) {
         <div className="last">{user.online ? 'Online' : 'Offline'}</div>
       </div>
     </li>
+  )
+}
+
+// Komponenta pro chat mezi uživateli
+function ChatWindow({ user, selectedUser }) {
+  const [messages, setMessages] = useState([])
+  const [input, setInput] = useState('')
+  const messagesEndRef = useRef(null)
+
+  // Vytvoření unikátního ID místnosti pro dvojici uživatelů (nezávislé na pořadí)
+  const roomId = [user.id, selectedUser.id].sort().join('_')
+
+  useEffect(() => {
+    const msgsCol = collection(db, 'chats', roomId, 'messages')
+    const q = query(msgsCol, orderBy('createdAt'))
+    const unsub = onSnapshot(q, snap => {
+      setMessages(snap.docs.map(d => d.data()))
+    })
+    return () => unsub()
+  }, [roomId])
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
+
+  async function sendMessage(e) {
+    e.preventDefault()
+    if (!input.trim()) return
+    const msgsCol = collection(db, 'chats', roomId, 'messages')
+    await addDoc(msgsCol, {
+      text: input,
+      from: user.id,
+      to: selectedUser.id,
+      createdAt: serverTimestamp(),
+      name: user.name,
+      avatar: user.avatar || null
+    })
+    setInput('')
+  }
+
+  return (
+    <div className="chat-window">
+      <div className="messages">
+        {messages.map((msg, i) => (
+          <div key={i} className={msg.from === user.id ? 'message own' : 'message'}>
+            <img src={msg.avatar || '/assets/default-avatar.png'} alt="avatar" />
+            <div>
+              <div className="msg-name">{msg.name}</div>
+              <div className="msg-text">{msg.text}</div>
+              <div className="msg-time">{msg.createdAt?.toDate ? msg.createdAt.toDate().toLocaleTimeString() : ''}</div>
+            </div>
+          </div>
+        ))}
+        <div ref={messagesEndRef} />
+      </div>
+      <form className="send-form" onSubmit={sendMessage}>
+        <input value={input} onChange={e => setInput(e.target.value)} placeholder="Napište zprávu..." autoFocus />
+        <button type="submit">Odeslat</button>
+      </form>
+    </div>
   )
 }
 
@@ -90,10 +151,7 @@ export default function App() {
       </aside>
       <main className="chat">
         {selectedUser ? (
-          <div style={{ padding: '20px' }}>
-            <h2>Chat s {selectedUser.name}</h2>
-            <p>Tady bude chatovací okno (zatím není implementováno).</p>
-          </div>
+          <ChatWindow user={user} selectedUser={selectedUser} />
         ) : (
           <div style={{ textAlign: 'center', marginTop: '40px', opacity: 0.7 }}>
             Vyberte uživatele ze seznamu vlevo pro zahájení konverzace.
