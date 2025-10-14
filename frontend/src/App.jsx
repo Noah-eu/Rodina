@@ -1,12 +1,12 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { db, ensureAuth, storage } from './firebase'
-import { collection, doc, getDoc, getDocs, query, where, setDoc, updateDoc } from 'firebase/firestore'
+import { collection, doc, getDoc, getDocs, query, where, setDoc, updateDoc, startAfter, limit } from 'firebase/firestore'
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 import bcrypt from 'bcryptjs'
 import { onSnapshot, orderBy, addDoc, serverTimestamp } from 'firebase/firestore'
 
 // Komponenta pro zobrazení jednoho uživatele v seznamu
-function UserListItem({ user, isSelected, onSelect }) {
+function UserListItem({ user, isSelected, onSelect, unread = 0 }) {
   return (
     <li className={(user.online ? 'online ' : '') + (isSelected ? 'selected' : '')} onClick={() => onSelect(user)}>
       <img src={user.avatar || '/assets/default-avatar.png'} alt="avatar" />
@@ -14,6 +14,9 @@ function UserListItem({ user, isSelected, onSelect }) {
         <div className="name">{user.name}</div>
         <div className="last">{user.online ? 'Online' : 'Offline'}</div>
       </div>
+      {unread > 0 && (
+        <span style={{marginLeft:'auto',background:'#6366f1',color:'#fff',fontSize:'12px',minWidth:24,height:24,display:'flex',alignItems:'center',justifyContent:'center',borderRadius:12,fontWeight:600}}>{unread}</span>
+      )}
     </li>
   )
 }
@@ -22,18 +25,70 @@ function UserListItem({ user, isSelected, onSelect }) {
 function ChatWindow({ user, selectedUser }) {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
+  const [imageFile, setImageFile] = useState(null)
+  const [imagePreview, setImagePreview] = useState(null)
+  const [sending, setSending] = useState(false)
   const messagesEndRef = useRef(null)
+  const messagesContainerRef = useRef(null)
+  const firstBatchLoadedRef = useRef(false)
+  const earliestDocRef = useRef(null)
+  const loadingMoreRef = useRef(false)
 
   // Vytvoření unikátního ID místnosti pro dvojici uživatelů (nezávislé na pořadí)
   const roomId = [user.id, selectedUser.id].sort().join('_')
 
   useEffect(() => {
-    const msgsCol = collection(db, 'chats', roomId, 'messages')
-    const q = query(msgsCol, orderBy('createdAt'))
-    const unsub = onSnapshot(q, snap => {
-      setMessages(snap.docs.map(d => d.data()))
+  const msgsCol = collection(db, 'chats', roomId, 'messages')
+  const qMsgs = query(msgsCol, orderBy('createdAt'))
+    const unsub = onSnapshot(qMsgs, snap => {
+      const list = snap.docs.map(d => d.data())
+      setMessages(list)
+      if (!firstBatchLoadedRef.current && list.length) firstBatchLoadedRef.current = true
+      if (list.length) {
+        const latest = list[list.length - 1]
+        const ts = latest.createdAt?.toMillis?.() || Date.now()
+        const readDocRef = doc(db, 'chats', roomId, 'reads', user.id)
+        setDoc(readDocRef, { lastRead: ts }, { merge: true }).catch(()=>{})
+      }
+      // Ulož nejstarší doc pro pagination
+      earliestDocRef.current = snap.docs[0] || null
     })
     return () => unsub()
+  }, [roomId, user.id])
+
+  // Lazy load na scroll top
+  useEffect(() => {
+    const el = messagesContainerRef.current
+    if (!el) return
+    const handler = async () => {
+      if (el.scrollTop > 0) return
+      if (loadingMoreRef.current) return
+      if (!earliestDocRef.current) return
+      loadingMoreRef.current = true
+      try {
+        const msgsCol = collection(db, 'chats', roomId, 'messages')
+        const qMore = query(msgsCol, orderBy('createdAt'), startAfter(earliestDocRef.current), limit(30))
+        const snapMore = await getDocs(qMore)
+        if (!snapMore.empty) {
+          const older = snapMore.docs.map(d => d.data())
+          // Prepend starší zprávy
+          setMessages(prev => [...older, ...prev])
+          earliestDocRef.current = snapMore.docs[0]
+          // Zachovat pozici scrollu aby neodskočilo
+          const prevHeight = el.scrollHeight
+          requestAnimationFrame(() => {
+            const newHeight = el.scrollHeight
+            el.scrollTop = newHeight - prevHeight
+          })
+        }
+      } catch (e) {
+        console.warn('Lazy load failed', e)
+      } finally {
+        loadingMoreRef.current = false
+      }
+    }
+    el.addEventListener('scroll', handler)
+    return () => el.removeEventListener('scroll', handler)
   }, [roomId])
 
   useEffect(() => {
@@ -42,28 +97,50 @@ function ChatWindow({ user, selectedUser }) {
 
   async function sendMessage(e) {
     e.preventDefault()
-    if (!input.trim()) return
-    const msgsCol = collection(db, 'chats', roomId, 'messages')
-    await addDoc(msgsCol, {
-      text: input,
-      from: user.id,
-      to: selectedUser.id,
-      createdAt: serverTimestamp(),
-      name: user.name,
-      avatar: user.avatar || null
-    })
-    setInput('')
+    if (sending) return
+    if (!input.trim() && !imageFile) return
+    setSending(true)
+    let imageUrl = null
+    try {
+      if (imageFile) {
+        const imgRef = ref(storage, `chatImages/${roomId}/${Date.now()}_${imageFile.name}`)
+        const snap = await uploadBytes(imgRef, imageFile)
+        imageUrl = await getDownloadURL(snap.ref)
+      }
+      const msgsCol = collection(db, 'chats', roomId, 'messages')
+      await addDoc(msgsCol, {
+        text: input.trim() || '',
+        imageUrl: imageUrl || null,
+        from: user.id,
+        to: selectedUser.id,
+        createdAt: serverTimestamp(),
+        name: user.name,
+        avatar: user.avatar || null
+      })
+      setInput('')
+      setImageFile(null)
+      setImagePreview(null)
+    } catch (err) {
+      console.error('Send failed:', err)
+    } finally {
+      setSending(false)
+    }
   }
 
   return (
     <div className="chat-window">
-      <div className="messages">
+  <div className="messages" ref={messagesContainerRef}>
         {messages.map((msg, i) => (
           <div key={i} className={msg.from === user.id ? 'message own' : 'message'}>
             <img src={msg.avatar || '/assets/default-avatar.png'} alt="avatar" />
             <div>
               <div className="msg-name">{msg.name}</div>
-              <div className="msg-text">{msg.text}</div>
+              {msg.imageUrl && (
+                <div style={{marginBottom: msg.text ? '6px' : '0'}}>
+                  <img src={msg.imageUrl} alt="obrázek" style={{maxWidth:'220px',borderRadius:'12px',display:'block',border:'1px solid #344250'}} />
+                </div>
+              )}
+              {msg.text && <div className="msg-text">{msg.text}</div>}
               <div className="msg-time">{msg.createdAt?.toDate ? msg.createdAt.toDate().toLocaleTimeString() : ''}</div>
             </div>
           </div>
@@ -71,8 +148,23 @@ function ChatWindow({ user, selectedUser }) {
         <div ref={messagesEndRef} />
       </div>
       <form className="send-form" onSubmit={sendMessage}>
+        {imagePreview && (
+          <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+            <img src={imagePreview} alt="preview" style={{maxWidth:120,borderRadius:12,border:'1px solid #344250'}} />
+            <button type="button" onClick={() => {setImageFile(null); setImagePreview(null)}} style={{background:'#dc2626',border:'none',color:'#fff',padding:'8px 12px',borderRadius:10,cursor:'pointer'}}>Zrušit obrázek</button>
+          </div>
+        )}
         <input value={input} onChange={e => setInput(e.target.value)} placeholder="Napište zprávu..." autoFocus />
-        <button type="submit">Odeslat</button>
+        <input type="file" accept="image/*" onChange={e => {
+          const f = e.target.files?.[0]
+          if (f) {
+            setImageFile(f)
+            const reader = new FileReader()
+            reader.onload = ev => setImagePreview(ev.target.result)
+            reader.readAsDataURL(f)
+          }
+        }} />
+        <button type="submit" disabled={sending}>{sending ? 'Odesílám...' : 'Odeslat'}</button>
       </form>
     </div>
   )
@@ -84,6 +176,7 @@ export default function App() {
   const [users, setUsers] = useState([])
   const [selectedUser, setSelectedUser] = useState(null)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [unreadMap, setUnreadMap] = useState({})
 
   // Načtení uživatele z localStorage při startu
   useEffect(() => {
@@ -97,20 +190,64 @@ export default function App() {
     }
   }, [])
 
-  // Načítání seznamu ostatních uživatelů
+  // Načítání seznamu ostatních uživatelů + unread listeners
   useEffect(() => {
     if (!user) return
+    let unsubList = []
     const fetchUsers = async () => {
       await ensureAuth
       const usersCol = collection(db, 'users')
-      const q = query(usersCol, where('id', '!=', user.id))
-      const snap = await getDocs(q)
+      const qUsers = query(usersCol, where('id', '!=', user.id))
+      const snap = await getDocs(qUsers)
       const userList = snap.docs.map(d => d.data())
       setUsers(userList)
+
+      // Zrušíme předchozí listenery
+      unsubList.forEach(fn => fn())
+      unsubList = []
+
+      userList.forEach(u => {
+        const roomId = [user.id, u.id].sort().join('_')
+        const readDocRef = doc(db, 'chats', roomId, 'reads', user.id)
+        const unsub = onSnapshot(readDocRef, async readSnap => {
+          const lastRead = readSnap.exists() ? readSnap.data().lastRead : 0
+          // Načteme zprávy (zatím bez optimalizace – lze zrychlit limit/where)
+          const msgsCol = collection(db, 'chats', roomId, 'messages')
+          const qMsgs = query(msgsCol, orderBy('createdAt', 'desc'))
+          const msgSnap = await getDocs(qMsgs)
+          let count = 0
+          msgSnap.forEach(m => {
+            const created = m.data().createdAt?.toMillis?.() || 0
+            if (created > lastRead && m.data().from !== user.id) count++
+          })
+          setUnreadMap(prev => ({ ...prev, [u.id]: count }))
+        })
+        unsubList.push(unsub)
+
+        // Notifikační listener na poslední zprávu (lehké – bere všechny zprávy; lze optimalizovat limit(1) desc)
+        const msgsCol = collection(db, 'chats', roomId, 'messages')
+        const unsubMsg = onSnapshot(query(msgsCol, orderBy('createdAt', 'desc'), limit(1)), snap => {
+          if (!snap.empty) {
+            const d = snap.docs[0].data()
+            if (d.from !== user.id && (!selectedUser || selectedUser.id !== u.id)) {
+              // Neaktivní room – pokus o notifikaci
+              if (Notification && Notification.permission === 'granted') {
+                try {
+                  new Notification(`${d.name}: ${d.text || '🖼 Obrázek'}`, { body: 'Nová zpráva', icon: d.avatar || '/assets/default-avatar.png' })
+                } catch(e) { /* ignore */ }
+              }
+            }
+          }
+        })
+        unsubList.push(unsubMsg)
+      })
     }
     fetchUsers().catch(console.error)
-    const interval = setInterval(fetchUsers, 15000) // Aktualizace každých 15s
-    return () => clearInterval(interval)
+    const interval = setInterval(fetchUsers, 20000)
+    return () => {
+      clearInterval(interval)
+      unsubList.forEach(fn => fn())
+    }
   }, [user])
 
 
@@ -145,6 +282,7 @@ export default function App() {
               user={u}
               isSelected={selectedUser?.id === u.id}
               onSelect={setSelectedUser}
+              unread={unreadMap[u.id] || 0}
             />
           ))}
         </ul>
