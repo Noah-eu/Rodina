@@ -151,10 +151,24 @@ export default function App() {
       </aside>
       <main className="chat">
         {selectedUser ? (
-          <ChatWindow user={user} selectedUser={selectedUser} />
+          <div style={{display:'flex',flexDirection:'column',height:'100%'}}>
+            <div style={{display:'flex',alignItems:'center',gap:'12px',padding:'12px 16px',borderBottom:'1px solid #2d3748',background:'rgba(0,0,0,.15)'}}>
+              <button aria-label="Zpět" onClick={() => setSelectedUser(null)} style={{background:'#1f2530',border:'1px solid #2d3748',color:'#e6edf3',width:44,height:44,borderRadius:12,cursor:'pointer',fontSize:'20px',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                ←
+              </button>
+              <div style={{display:'flex',alignItems:'center',gap:'12px'}}>
+                <img src={selectedUser.avatar || '/assets/default-avatar.png'} alt={selectedUser.name} style={{width:48,height:48,borderRadius:14,objectFit:'cover',border:'1px solid #3d4b5c'}} />
+                <div style={{display:'flex',flexDirection:'column'}}>
+                  <strong style={{fontSize:'16px'}}>{selectedUser.name}</strong>
+                  <span style={{fontSize:'12px',color:'#9ca3af'}}>{selectedUser.online ? 'Online' : 'Offline'}</span>
+                </div>
+              </div>
+            </div>
+            <ChatWindow user={user} selectedUser={selectedUser} />
+          </div>
         ) : (
-          <div style={{ textAlign: 'center', marginTop: '40px', opacity: 0.7 }}>
-            Vyberte uživatele ze seznamu vlevo pro zahájení konverzace.
+          <div className="empty-state">
+            Vyberte uživatele ze seznamu pro zahájení konverzace.
           </div>
         )}
       </main>
