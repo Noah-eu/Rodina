@@ -30,6 +30,14 @@ function ChatWindow({ user, selectedUser }) {
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState('')
   const [lightboxUrl, setLightboxUrl] = useState(null)
+  // Hlasové zprávy
+  const [recording, setRecording] = useState(false)
+  const mediaRecorderRef = useRef(null)
+  const streamRef = useRef(null)
+  const [audioBlob, setAudioBlob] = useState(null)
+  const [audioPreviewUrl, setAudioPreviewUrl] = useState(null)
+  const [recordingMs, setRecordingMs] = useState(0)
+  const recordingTimerRef = useRef(null)
   const messagesEndRef = useRef(null)
   const messagesContainerRef = useRef(null)
   const firstBatchLoadedRef = useRef(false)
@@ -105,13 +113,68 @@ function ChatWindow({ user, selectedUser }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [lightboxUrl])
 
+  // --- Hlasové zprávy ---
+  function formatMs(ms) {
+    const s = Math.floor(ms / 1000)
+    const m = Math.floor(s / 60)
+    const r = s % 60
+    return `${String(m).padStart(2,'0')}:${String(r).padStart(2,'0')}`
+  }
+
+  async function startRecording() {
+    try {
+      if (imageFile) { setImageFile(null); setImagePreview(null) }
+      if (audioPreviewUrl) { URL.revokeObjectURL(audioPreviewUrl); setAudioPreviewUrl(null) }
+      setAudioBlob(null)
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      streamRef.current = stream
+      const mime = (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) ? 'audio/webm;codecs=opus' : undefined
+      const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined)
+      const chunks = []
+      mr.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data) }
+      mr.onstop = () => {
+        const blob = new Blob(chunks, { type: mr.mimeType || 'audio/webm' })
+        const url = URL.createObjectURL(blob)
+        setAudioBlob(blob)
+        setAudioPreviewUrl(url)
+        setRecording(false)
+        stream.getTracks().forEach(t => t.stop())
+        streamRef.current = null
+        if (recordingTimerRef.current) { clearInterval(recordingTimerRef.current); recordingTimerRef.current = null }
+      }
+      mr.start()
+      mediaRecorderRef.current = mr
+      setRecording(true)
+      setRecordingMs(0)
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current)
+      recordingTimerRef.current = setInterval(() => setRecordingMs(prev => prev + 1000), 1000)
+    } catch (err) {
+      console.error('Mic error', err)
+      alert('Nelze spustit mikrofon: ' + (err.message || err.name))
+    }
+  }
+
+  function stopRecording() {
+    try { mediaRecorderRef.current?.stop() } catch {}
+  }
+
+  function cancelAudio() {
+    try { if (recording) stopRecording() } catch {}
+    if (audioPreviewUrl) URL.revokeObjectURL(audioPreviewUrl)
+    setAudioPreviewUrl(null)
+    setAudioBlob(null)
+    setRecording(false)
+    setRecordingMs(0)
+  }
+
   async function sendMessage(e) {
     e.preventDefault()
     if (sending) return
-    if (!input.trim() && !imageFile) return
+    if (!input.trim() && !imageFile && !audioBlob) return
     setSendError('')
     setSending(true)
     let imageUrl = null
+    let audioUrl = null
     try {
       if (imageFile) {
         const imgRef = ref(storage, `chatImages/${roomId}/${Date.now()}_${imageFile.name}`)
@@ -121,10 +184,20 @@ function ChatWindow({ user, selectedUser }) {
         })
         imageUrl = await getDownloadURL(snap.ref)
       }
+      if (audioBlob) {
+        const filename = `voice_${Date.now()}.webm`
+        const aRef = ref(storage, `chatAudio/${roomId}/${filename}`)
+        const snapA = await uploadBytes(aRef, audioBlob, {
+          contentType: audioBlob.type || 'audio/webm',
+          cacheControl: 'public, max-age=31536000, immutable'
+        })
+        audioUrl = await getDownloadURL(snapA.ref)
+      }
       const msgsCol = collection(db, 'chats', roomId, 'messages')
       await addDoc(msgsCol, {
         text: input.trim() || '',
         imageUrl: imageUrl || null,
+        audioUrl: audioUrl || null,
         from: user.id,
         to: selectedUser.id,
         createdAt: serverTimestamp(),
@@ -134,6 +207,10 @@ function ChatWindow({ user, selectedUser }) {
       setInput('')
       setImageFile(null)
       setImagePreview(null)
+      if (audioPreviewUrl) URL.revokeObjectURL(audioPreviewUrl)
+      setAudioPreviewUrl(null)
+      setAudioBlob(null)
+      setRecordingMs(0)
     } catch (err) {
       console.error('Send failed:', err)
       setSendError('Nepodařilo se odeslat zprávu. Zkuste to znovu.')
@@ -155,6 +232,11 @@ function ChatWindow({ user, selectedUser }) {
                   <img src={msg.imageUrl} alt="obrázek" onClick={() => setLightboxUrl(msg.imageUrl)} />
                 </div>
               )}
+              {msg.audioUrl && (
+                <div className="msg-audio" style={{marginBottom: (msg.text || msg.imageUrl) ? '6px' : '0'}}>
+                  <audio controls preload="none" src={msg.audioUrl} />
+                </div>
+              )}
               {msg.text && <div className="msg-text">{msg.text}</div>}
               <div className="msg-time">{msg.createdAt?.toDate ? msg.createdAt.toDate().toLocaleTimeString() : ''}</div>
             </div>
@@ -169,6 +251,12 @@ function ChatWindow({ user, selectedUser }) {
             <button type="button" onClick={() => {setImageFile(null); setImagePreview(null)}} style={{background:'#dc2626',border:'none',color:'#fff',padding:'8px 12px',borderRadius:10,cursor:'pointer'}}>Zrušit obrázek</button>
           </div>
         )}
+        {audioPreviewUrl && (
+          <div className="preview-strip" style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+            <audio controls src={audioPreviewUrl} />
+            <button type="button" className="btn danger" onClick={cancelAudio}>Zrušit hlasovku</button>
+          </div>
+        )}
         <input value={input} onChange={e => setInput(e.target.value)} placeholder="Napište zprávu..." autoFocus />
         <input id="chat-image-input" style={{display:'none'}} type="file" accept="image/*" onChange={e => {
           const f = e.target.files?.[0]
@@ -180,7 +268,13 @@ function ChatWindow({ user, selectedUser }) {
           }
         }} />
         <button type="button" onClick={() => document.getElementById('chat-image-input').click()} style={{background:'#2a3442',border:'1px solid #344250',color:'#e6edf3',width:48,height:48,borderRadius:14,cursor:'pointer',fontSize:'22px',display:'flex',alignItems:'center',justifyContent:'center'}} title="Připojit obrázek">📎</button>
-  <button type="submit" disabled={sending} style={{minWidth:110}}>{sending ? 'Odesílám…' : 'Odeslat'}</button>
+        {!recording && (
+          <button type="button" onClick={startRecording} style={{background:'#2a3442',border:'1px solid #344250',color:'#e6edf3',width:48,height:48,borderRadius:14,cursor:'pointer',fontSize:'20px',display:'flex',alignItems:'center',justifyContent:'center'}} title="Nahrát hlasovou zprávu">🎤</button>
+        )}
+        {recording && (
+          <button type="button" onClick={stopRecording} style={{background:'#b91c1c',border:'1px solid #7f1d1d',color:'#fff',minWidth:120,height:48,borderRadius:14,cursor:'pointer',fontSize:'15px',display:'flex',alignItems:'center',justifyContent:'center',gap:8}} title="Zastavit nahrávání">⏺ Nahrávám {formatMs(recordingMs)}</button>
+        )}
+        <button type="submit" disabled={sending || (!input.trim() && !imageFile && !audioBlob)} style={{minWidth:110}}>{sending ? 'Odesílám…' : 'Odeslat'}</button>
   {sendError && <div style={{color:'#dc2626',marginTop:8,fontSize:14}}>{sendError}</div>}
       </form>
       {lightboxUrl && (

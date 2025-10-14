@@ -92,6 +92,10 @@ body { background: var(--bg); color: var(--text); -webkit-font-smoothing: antial
   box-shadow: 0 2px 8px -2px rgba(0,0,0,.6);
 }
 
+/* Audio message */
+.msg-audio audio { width: 100%; max-width: 360px; }
+
+
 /* Lightbox overlay */
 .lightbox {
   position: fixed;
