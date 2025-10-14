@@ -29,6 +29,7 @@ function ChatWindow({ user, selectedUser }) {
   const [imagePreview, setImagePreview] = useState(null)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState('')
+  const [lightboxUrl, setLightboxUrl] = useState(null)
   const messagesEndRef = useRef(null)
   const messagesContainerRef = useRef(null)
   const firstBatchLoadedRef = useRef(false)
@@ -96,6 +97,14 @@ function ChatWindow({ user, selectedUser }) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  // Zavření náhledu ESC
+  useEffect(() => {
+    if (!lightboxUrl) return
+    const onKey = (e) => { if (e.key === 'Escape') setLightboxUrl(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [lightboxUrl])
+
   async function sendMessage(e) {
     e.preventDefault()
     if (sending) return
@@ -142,8 +151,8 @@ function ChatWindow({ user, selectedUser }) {
             <div>
               <div className="msg-name">{msg.name}</div>
               {msg.imageUrl && (
-                <div style={{marginBottom: msg.text ? '6px' : '0'}}>
-                  <img src={msg.imageUrl} alt="obrázek" style={{maxWidth:'220px',borderRadius:'12px',display:'block',border:'1px solid #344250'}} />
+                <div className="msg-image" style={{marginBottom: msg.text ? '6px' : '0'}}>
+                  <img src={msg.imageUrl} alt="obrázek" onClick={() => setLightboxUrl(msg.imageUrl)} />
                 </div>
               )}
               {msg.text && <div className="msg-text">{msg.text}</div>}
@@ -174,6 +183,12 @@ function ChatWindow({ user, selectedUser }) {
   <button type="submit" disabled={sending} style={{minWidth:110}}>{sending ? 'Odesílám…' : 'Odeslat'}</button>
   {sendError && <div style={{color:'#dc2626',marginTop:8,fontSize:14}}>{sendError}</div>}
       </form>
+      {lightboxUrl && (
+        <div className="lightbox" onClick={() => setLightboxUrl(null)}>
+          <img src={lightboxUrl} alt="náhled" onClick={(e) => e.stopPropagation()} />
+          <button className="lightbox-close" onClick={() => setLightboxUrl(null)} aria-label="Zavřít">×</button>
+        </div>
+      )}
     </div>
   )
 }
