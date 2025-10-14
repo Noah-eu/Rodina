@@ -2,7 +2,6 @@ import React, { useEffect, useState, useRef } from 'react'
 import { db, ensureAuth, storage } from './firebase'
 import { collection, doc, getDoc, getDocs, query, where, setDoc, updateDoc } from 'firebase/firestore'
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
-import { onAuthStateChanged } from "firebase/auth";
 import bcrypt from 'bcryptjs'
 
 // Komponenta pro zobrazení jednoho uživatele v seznamu
