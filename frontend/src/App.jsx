@@ -22,6 +22,7 @@ export default function App() {
   const [user, setUser] = useState(null)
   const [users, setUsers] = useState([])
   const [selectedUser, setSelectedUser] = useState(null)
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
 
   // Načtení uživatele z localStorage při startu
   useEffect(() => {
@@ -69,8 +70,12 @@ export default function App() {
 
   return (
     <div className="app">
+      {isSettingsOpen && <SettingsModal user={user} onAuth={handleAuth} onClose={() => setIsSettingsOpen(false)} />}
       <aside className="sidebar">
-        <h2>Rodina</h2>
+        <div className="sidebar-header">
+          <h2>Rodina</h2>
+          <button className="settings-btn" onClick={() => setIsSettingsOpen(true)}>⚙️</button>
+        </div>
         <button onClick={handleLogout}>Odhlásit se</button>
         <ul>
           {users.map(u => (
@@ -95,6 +100,63 @@ export default function App() {
           </div>
         )}
       </main>
+    </div>
+  )
+}
+
+function SettingsModal({ user, onAuth, onClose }) {
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [avatarFile, setAvatarFile] = useState(null)
+  const [feedback, setFeedback] = useState('')
+
+  async function handleAvatarChange(e) {
+    e.preventDefault()
+    if (!avatarFile) {
+      setFeedback('Nejprve vyberte soubor.')
+      return
+    }
+    setIsSubmitting(true)
+    setFeedback('Nahrávám fotku...')
+
+    try {
+      await ensureAuth
+      const storageRef = ref(storage, `avatars/${user.id}/${avatarFile.name}`)
+      const snapshot = await uploadBytes(storageRef, avatarFile)
+      const avatarUrl = await getDownloadURL(snapshot.ref)
+
+      const userDocRef = doc(db, 'users', user.id)
+      await updateDoc(userDocRef, { avatar: avatarUrl })
+
+      const updatedUser = { ...user, avatar: avatarUrl }
+      onAuth(updatedUser) // Aktualizuje stav v App a localStorage
+
+      setFeedback('Profilová fotka byla úspěšně změněna!')
+      setTimeout(() => {
+        onClose()
+      }, 1500)
+
+    } catch (error) {
+      console.error("Avatar upload failed:", error)
+      setFeedback('Nahrávání se nezdařilo: ' + error.message)
+      setIsSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <h2>Nastavení</h2>
+        <form onSubmit={handleAvatarChange}>
+          <label>Změnit profilovou fotku:</label>
+          <img src={user.avatar || '/assets/default-avatar.png'} alt="Current Avatar" className="avatar-preview" />
+          <input type="file" accept="image/*" onChange={e => setAvatarFile(e.target.files[0])} />
+          <button type="submit" disabled={isSubmitting || !avatarFile}>
+            {isSubmitting ? 'Ukládám...' : 'Uložit změny'}
+          </button>
+          {feedback && <p className="feedback">{feedback}</p>}
+        </form>
+        <button className="close-btn" onClick={onClose}>Zavřít</button>
+      </div>
     </div>
   )
 }
