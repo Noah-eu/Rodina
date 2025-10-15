@@ -310,6 +310,17 @@ function ChatWindow({ user, selectedUser }) {
         name: user.name,
         avatar: user.avatar || null
       })
+      // Fire-and-forget push notify via backend (if configured for dev or via Netlify proxy in prod)
+      try {
+        const apiBase = import.meta.env.PROD ? '/.netlify/functions/proxy' : (import.meta.env.VITE_API_URL || 'http://localhost:3001')
+        const textPreview = (input || '').trim()
+        const body = textPreview || (imageUrl ? 'Poslal(a) fotku' : (audioUrl ? 'Poslal(a) hlasovou zprávu' : 'Nová zpráva'))
+        fetch(`${apiBase}/api/push/notify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: `${user.name}`, body })
+        }).catch(()=>{})
+      } catch (_) {}
       setInput('')
       setImageFile(null)
       setImagePreview(null)

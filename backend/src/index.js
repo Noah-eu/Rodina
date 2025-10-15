@@ -354,6 +354,24 @@ app.post('/api/push/subscribe', (req, res)=>{
   res.json({ ok: true });
 })
 
+// Web Push: broadcast custom notification (used by frontend after Firestore message)
+app.post('/api/push/notify', async (req, res) => {
+  try {
+    const { title, body } = req.body || {};
+    const nTitle = (title && String(title)) || 'Rodina';
+    const nBody = (body && String(body)) || 'Nové oznámení';
+    readDB();
+    const subs = Array.isArray(dbData.pushSubscriptions) ? dbData.pushSubscriptions : [];
+    let sent = 0;
+    for (const sub of subs) {
+      try { await webpush.sendNotification(sub, JSON.stringify({ title: nTitle, body: nBody })); sent++; } catch(e) {}
+    }
+    return res.json({ ok: true, sent });
+  } catch (e) {
+    return res.status(500).json({ error: 'Notify failed', details: e.message });
+  }
+})
+
 io.on('connection', (socket) => {
   socket.on('registerSocket', (userId) => {
     socket.userId = userId;
