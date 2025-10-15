@@ -274,7 +274,11 @@ function ChatWindow({ user, selectedUser }) {
         {recording && (
           <button type="button" onClick={stopRecording} style={{background:'#b91c1c',border:'1px solid #7f1d1d',color:'#fff',minWidth:120,height:48,borderRadius:14,cursor:'pointer',fontSize:'15px',display:'flex',alignItems:'center',justifyContent:'center',gap:8}} title="Zastavit nahrávání">⏺ Nahrávám {formatMs(recordingMs)}</button>
         )}
-        <button type="submit" disabled={sending || (!input.trim() && !imageFile && !audioBlob)} style={{minWidth:110}}>{sending ? 'Odesílám…' : 'Odeslat'}</button>
+        <button type="submit" aria-label="Odeslat" className="send-icon-btn" disabled={sending || (!input.trim() && !imageFile && !audioBlob)}>
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
+            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path>
+          </svg>
+        </button>
   {sendError && <div style={{color:'#dc2626',marginTop:8,fontSize:14}}>{sendError}</div>}
       </form>
       {lightboxUrl && (
@@ -393,7 +397,7 @@ export default function App() {
   if (!user) return <Auth onAuth={handleAuth} />
 
   return (
-    <div className="app">
+    <div className={"app" + (selectedUser ? " chat-open" : "")}>
       {isSettingsOpen && <SettingsModal user={user} onAuth={handleAuth} onClose={() => setIsSettingsOpen(false)} />}
       <aside className="sidebar">
         <div className="sidebar-header">
