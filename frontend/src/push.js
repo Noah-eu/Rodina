@@ -12,11 +12,26 @@ export async function initPush(swReg, apiBase='', userId=null){
   if (!('PushManager' in window)) return
   try{
     const perm = await Notification.requestPermission()
-    if (perm !== 'granted') return
-    const pkRes = await fetch(`${apiBase}/api/push/publicKey`)
-    if (!pkRes.ok) return
+    if (perm !== 'granted') { console.warn('[push] Permission not granted'); return }
+    let pkRes = await fetch(`${apiBase}/api/push/publicKey`).catch(()=>null)
+    if (!pkRes || !pkRes.ok) {
+      console.warn('[push] publicKey via proxy failed')
+      // optional: try direct backend if configured
+      const direct = import.meta.env.VITE_API_URL
+      if (direct) {
+        pkRes = await fetch(`${direct}/api/push/publicKey`).catch(()=>null)
+      }
+    }
+    if (!pkRes || !pkRes.ok) { console.warn('[push] No publicKey endpoint reachable'); return }
     const { publicKey } = await pkRes.json()
     const sub = await swReg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) })
-    await fetch(`${apiBase}/api/push/subscribe`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ subscription: sub, userId }) })
+    let subRes = await fetch(`${apiBase}/api/push/subscribe`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ subscription: sub, userId }) }).catch(()=>null)
+    if (!subRes || !subRes.ok) {
+      const direct = import.meta.env.VITE_API_URL
+      if (direct) {
+        subRes = await fetch(`${direct}/api/push/subscribe`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ subscription: sub, userId }) }).catch(()=>null)
+      }
+    }
+    if (!subRes || !subRes.ok) console.warn('[push] Subscribe failed')
   }catch(e){ /* ignore */ }
 }

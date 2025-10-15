@@ -329,7 +329,10 @@ app.post('/api/call', async (req, res)=>{
   broadcast('incoming_call', info);
   // Push oznámení o příchozím hovoru
   readDB();
-  const subs = Array.isArray(dbData.pushSubscriptions) ? dbData.pushSubscriptions : [];
+  let subs = Array.isArray(dbData.pushSubscriptions) ? dbData.pushSubscriptions : [];
+  if (info && info.to) {
+    subs = subs.filter(s => s.userId === info.to);
+  }
   for (const sub of subs){
     try{ await webpush.sendNotification(sub, JSON.stringify({ title: 'Rodina', body: 'Příchozí hovor' })) }catch(e){}
   }
@@ -354,6 +357,22 @@ app.post('/api/push/subscribe', (req, res)=>{
   else dbData.pushSubscriptions[idx] = record;
   writeDB();
   res.json({ ok: true });
+})
+
+// Web Push debug: report VAPID presence and number of subscriptions
+app.get('/api/push/debug', (req, res) => {
+  try {
+    let hasVapid = false;
+    try {
+      const saved = JSON.parse(fs.readFileSync(vapidPath, 'utf8'));
+      hasVapid = Boolean(saved && saved.publicKey && saved.privateKey);
+    } catch (_) {}
+    readDB();
+    const count = Array.isArray(dbData.pushSubscriptions) ? dbData.pushSubscriptions.length : 0;
+    res.json({ hasVapid, subscriptions: count });
+  } catch (e) {
+    res.status(500).json({ error: 'debug failed', details: e.message });
+  }
 })
 
 // Web Push: broadcast custom notification (used by frontend after Firestore message)
