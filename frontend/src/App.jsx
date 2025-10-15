@@ -383,6 +383,51 @@ export default function App() {
   const [selectedUser, setSelectedUser] = useState(null)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [unreadMap, setUnreadMap] = useState({})
+  // Audio notifikace – odemčení a sdílený kontext
+  const audioCtxRef = useRef(null)
+  const [audioReady, setAudioReady] = useState(false)
+
+  // Po prvním gestu uživatele odemkni AudioContext a případně požádej o notifikační oprávnění
+  useEffect(() => {
+    const unlock = async () => {
+      try {
+        if (!audioCtxRef.current) {
+          audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)()
+        }
+        if (audioCtxRef.current.state === 'suspended') {
+          await audioCtxRef.current.resume()
+        }
+        setAudioReady(true)
+        if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+          try { await Notification.requestPermission() } catch {}
+        }
+      } catch {}
+    }
+    const once = () => { unlock(); window.removeEventListener('pointerdown', once); window.removeEventListener('keydown', once); window.removeEventListener('touchstart', once) }
+    window.addEventListener('pointerdown', once)
+    window.addEventListener('keydown', once)
+    window.addEventListener('touchstart', once)
+    return () => {
+      window.removeEventListener('pointerdown', once)
+      window.removeEventListener('keydown', once)
+      window.removeEventListener('touchstart', once)
+    }
+  }, [])
+
+  const playBeep = () => {
+    try {
+      const ctx = audioCtxRef.current
+      if (!ctx) return
+      const o = ctx.createOscillator(); const g = ctx.createGain()
+      o.type = 'sine'; o.frequency.value = 880
+      o.connect(g); g.connect(ctx.destination)
+      const t = ctx.currentTime
+      g.gain.setValueAtTime(0.0001, t)
+      g.gain.exponentialRampToValueAtTime(0.15, t + 0.01)
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.25)
+      o.start(t); o.stop(t + 0.25)
+    } catch {}
+  }
 
   // Načtení uživatele z localStorage při startu
   useEffect(() => {
@@ -440,15 +485,9 @@ export default function App() {
               if (Notification && Notification.permission === 'granted') {
                 try {
                   new Notification(`${d.name}: ${d.text || '🖼 Obrázek'}`, { body: 'Nová zpráva', icon: d.avatar || '/assets/default-avatar.png' })
-                  // Zvuková odezva
-                  try {
-                    const ctx = new (window.AudioContext || window.webkitAudioContext)()
-                    const o = ctx.createOscillator(); const g = ctx.createGain();
-                    o.type='sine'; o.frequency.value=880; o.connect(g); g.connect(ctx.destination);
-                    g.gain.setValueAtTime(0.001, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.01);
-                    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
-                    o.start(); o.stop(ctx.currentTime + 0.25)
-                  } catch(e) { /* ignore audio errors */ }
+                  // Zvuková a haptická odezva (pokud je odemčený audio kontext)
+                  if (audioReady) playBeep()
+                  try { navigator.vibrate && navigator.vibrate([40, 30, 40]) } catch {}
                 } catch(e) { /* ignore */ }
               }
             }
