@@ -15,7 +15,8 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js')
     .then(async (reg)=>{
       console.log('SW registered')
-      const apiBase = import.meta.env.PROD ? '/.netlify/functions/proxy' : (import.meta.env.VITE_API_URL || 'http://localhost:3001')
+      // In production, call "/api" and let Netlify redirect map to the proxy function
+      const apiBase = import.meta.env.PROD ? '/api' : (import.meta.env.VITE_API_URL || 'http://localhost:3001')
       try {
         const u = JSON.parse(localStorage.getItem('rodina:user') || 'null')
         await initPush(reg, apiBase, u?.id || null)

@@ -313,7 +313,8 @@ function ChatWindow({ user, selectedUser }) {
       })
       // Fire-and-forget push notify via backend (if configured for dev or via Netlify proxy in prod)
       try {
-        const apiBase = import.meta.env.PROD ? '/.netlify/functions/proxy' : (import.meta.env.VITE_API_URL || 'http://localhost:3001')
+          // In production, use the "/api" base which is redirected to Netlify function proxy
+          const apiBase = import.meta.env.PROD ? '/api' : (import.meta.env.VITE_API_URL || 'http://localhost:3001')
         const textPreview = (input || '').trim()
         const body = textPreview || (imageUrl ? 'Poslal(a) fotku' : (audioUrl ? 'Poslal(a) hlasovou zprávu' : 'Nová zpráva'))
         fetch(`${apiBase}/api/push/notify`, {

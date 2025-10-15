@@ -1,7 +1,8 @@
 exports.handler = async function(event) {
   // Základní proxy z Netlify Functions na náš backend server
   // Vyžadujeme BACKEND_URL. Nepoužíváme VITE_API_URL (mohlo by vést k rekurzi přes functions).
-  const API = process.env.BACKEND_URL
+  // Normalize BACKEND_URL (strip trailing slash)
+  const API = (process.env.BACKEND_URL || '').replace(/\/$/, '')
   if (!API) {
     return {
       statusCode: 500,
@@ -23,6 +24,8 @@ exports.handler = async function(event) {
     }
   }
   let path = event.path.replace('/.netlify/functions/proxy', '')
+  // Avoid accidental double slashes and duplicate /api segments
+  path = path.replace(/\/\/+/, '/').replace(/^\/api\/api\b/, '/api')
   // ochrana: nesmíme proxovat zpět do Functions
   if (path.startsWith('/.netlify/functions')) {
     return { statusCode: 400, body: 'Invalid target path' }
@@ -42,7 +45,7 @@ exports.handler = async function(event) {
     const contentType = res.headers.get('content-type') || 'application/octet-stream'
     return {
       statusCode: res.status,
-      headers: { 'content-type': contentType },
+      headers: { 'content-type': contentType, 'x-proxy-target': url },
       body: buf.toString('base64'),
       isBase64Encoded: true,
     }
