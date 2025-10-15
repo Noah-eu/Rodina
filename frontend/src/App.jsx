@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react'
+import React, { useEffect, useState, useRef, useMemo } from 'react'
 import { db, ensureAuth, storage } from './firebase'
 import { collection, doc, getDoc, getDocs, query, where, setDoc, updateDoc, startAfter, limit } from 'firebase/firestore'
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
@@ -28,6 +28,22 @@ function VoiceMessage({ src, own = false }) {
   const [progress, setProgress] = useState(0)
   const [duration, setDuration] = useState(0)
   const [current, setCurrent] = useState(0)
+
+  // Pseudo-waveform segmenty (stabilní podle src)
+  const bars = useMemo(() => {
+    const N = 40
+    // jednoduchý seed ze src
+    let seed = 0
+    try { for (let i = 0; i < Math.min(64, src.length); i++) seed = (seed * 31 + src.charCodeAt(i)) >>> 0 } catch {}
+    const arr = []
+    for (let i = 0; i < N; i++) {
+      const t = i / N
+      const v = Math.abs(Math.sin((i + seed % 17) * 0.6) * 0.6 + Math.sin((i + seed % 13) * 1.3) * 0.3)
+      const h = 6 + Math.round(v * 22) // 6..28 px (viz CSS height:28px)
+      arr.push(h)
+    }
+    return arr
+  }, [src])
 
   const fmt = (sec) => {
     const s = Math.floor(sec || 0)
@@ -98,7 +114,12 @@ function VoiceMessage({ src, own = false }) {
         {playing ? '❚❚' : '▶'}
       </button>
       <div className="voice-wave" onClick={seek} role="progressbar" aria-valuemin={0} aria-valuemax={duration} aria-valuenow={current}>
-        <div className="voice-progress" style={{ width: `${progress}%` }} />
+        <div className="voice-bars" aria-hidden="true">
+          {bars.map((h, i) => (<span key={i} style={{height: h}} />))}
+        </div>
+        <div className="voice-bars voice-bars--active" style={{ width: `${progress}%` }} aria-hidden="true">
+          {bars.map((h, i) => (<span key={i} style={{height: h}} />))}
+        </div>
       </div>
       <div className="voice-time">{fmt(current)} / {fmt(duration)}</div>
       <audio ref={audioRef} src={src} preload="metadata" />
