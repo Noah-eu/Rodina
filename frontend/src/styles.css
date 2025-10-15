@@ -95,6 +95,18 @@ body { background: var(--bg); color: var(--text); -webkit-font-smoothing: antial
 /* Audio message */
 .msg-audio audio { width: 100%; max-width: 360px; }
 
+/* Custom voice message player */
+.voice { display:flex; align-items:center; gap:10px; background:#2a3442; border:1px solid #344250; padding:10px 12px; border-radius:16px; }
+.message.own .voice { background: linear-gradient(135deg,#6366f1,#818cf8); border-color:#5d63e4; color:#fff; }
+.voice-btn { width:36px; height:36px; border-radius:50%; border:none; background:#0ea5e9; color:#fff; font-weight:700; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 8px -3px rgba(0,0,0,.6); }
+.message.own .voice-btn { background:#0bbf83; }
+.voice-wave { flex:1; height:6px; background:rgba(255,255,255,.12); border-radius:999px; position:relative; cursor:pointer; }
+.message.own .voice-wave { background:rgba(255,255,255,.25); }
+.voice-progress { position:absolute; left:0; top:0; bottom:0; width:0%; background:#60a5fa; border-radius:999px; }
+.message.own .voice-progress { background:rgba(255,255,255,.9); }
+.voice-time { font-size:12px; color: var(--text-dim); min-width:70px; text-align:right; }
+.message.own .voice-time { color:#e7e9ff; }
+
 
 /* Lightbox overlay */
 .lightbox {

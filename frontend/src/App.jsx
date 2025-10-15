@@ -21,6 +21,91 @@ function UserListItem({ user, isSelected, onSelect, unread = 0 }) {
   )
 }
 
+// Jednoduchý přehrávač hlasové zprávy ve stylu "kliknu a hraju"
+function VoiceMessage({ src, own = false }) {
+  const audioRef = useRef(null)
+  const [playing, setPlaying] = useState(false)
+  const [progress, setProgress] = useState(0)
+  const [duration, setDuration] = useState(0)
+  const [current, setCurrent] = useState(0)
+
+  const fmt = (sec) => {
+    const s = Math.floor(sec || 0)
+    const m = Math.floor(s / 60)
+    const r = s % 60
+    return `${String(m).padStart(1,'0')}:${String(r).padStart(2,'0')}`
+  }
+
+  useEffect(() => {
+    const a = audioRef.current
+    if (!a) return
+    const onLoaded = () => setDuration(a.duration || 0)
+    const onTime = () => {
+      setCurrent(a.currentTime || 0)
+      setProgress(a.duration ? (a.currentTime / a.duration) * 100 : 0)
+    }
+    const onEnded = () => { setPlaying(false); setProgress(0); setCurrent(0) }
+    a.addEventListener('loadedmetadata', onLoaded)
+    a.addEventListener('timeupdate', onTime)
+    a.addEventListener('ended', onEnded)
+    return () => {
+      a.removeEventListener('loadedmetadata', onLoaded)
+      a.removeEventListener('timeupdate', onTime)
+      a.removeEventListener('ended', onEnded)
+    }
+  }, [])
+
+  // Zastaví ostatní přehrávače v rámci stránky
+  useEffect(() => {
+    const handler = (ev) => {
+      if (ev.detail && ev.detail !== audioRef.current) {
+        // jiný přehrávač se spustil => pauza
+        if (!audioRef.current.paused) {
+          audioRef.current.pause()
+          setPlaying(false)
+        }
+      }
+    }
+    window.addEventListener('rodina:voice:play', handler)
+    return () => window.removeEventListener('rodina:voice:play', handler)
+  }, [])
+
+  const toggle = () => {
+    const a = audioRef.current
+    if (!a) return
+    if (a.paused) {
+      window.dispatchEvent(new CustomEvent('rodina:voice:play', { detail: a }))
+      a.play().then(() => setPlaying(true)).catch(() => {})
+    } else {
+      a.pause()
+      setPlaying(false)
+    }
+  }
+
+  const seek = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const x = Math.max(0, Math.min(e.clientX - rect.left, rect.width))
+    const ratio = rect.width ? x / rect.width : 0
+    const a = audioRef.current
+    if (a && a.duration) {
+      a.currentTime = a.duration * ratio
+    }
+  }
+
+  return (
+    <div className={"voice" + (own ? " own" : "")}> 
+      <button type="button" className={"voice-btn" + (playing ? " playing" : "")} onClick={toggle} aria-label={playing ? 'Pozastavit' : 'Přehrát'}>
+        {playing ? '❚❚' : '▶'}
+      </button>
+      <div className="voice-wave" onClick={seek} role="progressbar" aria-valuemin={0} aria-valuemax={duration} aria-valuenow={current}>
+        <div className="voice-progress" style={{ width: `${progress}%` }} />
+      </div>
+      <div className="voice-time">{fmt(current)} / {fmt(duration)}</div>
+      <audio ref={audioRef} src={src} preload="metadata" />
+    </div>
+  )
+}
+
 // Komponenta pro chat mezi uživateli
 function ChatWindow({ user, selectedUser }) {
   const [messages, setMessages] = useState([])
@@ -234,7 +319,7 @@ function ChatWindow({ user, selectedUser }) {
               )}
               {msg.audioUrl && (
                 <div className="msg-audio" style={{marginBottom: (msg.text || msg.imageUrl) ? '6px' : '0'}}>
-                  <audio controls preload="none" src={msg.audioUrl} />
+                  <VoiceMessage src={msg.audioUrl} own={msg.from === user.id} />
                 </div>
               )}
               {msg.text && <div className="msg-text">{msg.text}</div>}
