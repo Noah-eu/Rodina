@@ -4,6 +4,7 @@ import { collection, doc, getDoc, getDocs, query, where, setDoc, updateDoc, star
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 import bcrypt from 'bcryptjs'
 import { onSnapshot, orderBy, addDoc, serverTimestamp } from 'firebase/firestore'
+import { initPush } from './push'
 
 // Komponenta pro zobrazení jednoho uživatele v seznamu
 function UserListItem({ user, isSelected, onSelect, unread = 0 }) {
@@ -413,6 +414,7 @@ export default function App() {
   const [user, setUser] = useState(null)
   const [users, setUsers] = useState([])
   const [selectedUser, setSelectedUser] = useState(null)
+  const selectedUserRef = useRef(null)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [unreadMap, setUnreadMap] = useState({})
   // Audio notifikace – odemčení a sdílený kontext
@@ -512,7 +514,8 @@ export default function App() {
         const unsubMsg = onSnapshot(query(msgsCol, orderBy('createdAt', 'desc'), limit(1)), snap => {
           if (!snap.empty) {
             const d = snap.docs[0].data()
-            if (d.from !== user.id && (!selectedUser || selectedUser.id !== u.id)) {
+            const activeSel = selectedUserRef.current
+            if (d.from !== user.id && (!activeSel || activeSel.id !== u.id)) {
               // Neaktivní room – pokus o notifikaci
               if (Notification && Notification.permission === 'granted') {
                 try {
@@ -536,10 +539,20 @@ export default function App() {
     }
   }, [user])
 
+  // Udržuj referenci na aktuálně vybraného uživatele pro notifikační callbacky
+  useEffect(() => { selectedUserRef.current = selectedUser }, [selectedUser])
+
 
   const handleAuth = (authedUser) => {
     localStorage.setItem('rodina:user', JSON.stringify(authedUser))
     setUser(authedUser)
+    // Po přihlášení znovu zaregistruj push se svým userId
+    try {
+      if ('serviceWorker' in navigator) {
+        const apiBase = import.meta.env.PROD ? '/.netlify/functions/proxy' : (import.meta.env.VITE_API_URL || 'http://localhost:3001')
+        navigator.serviceWorker.ready.then(reg => initPush(reg, apiBase, authedUser.id)).catch(()=>{})
+      }
+    } catch (_) {}
   }
 
   const handleLogout = () => {
