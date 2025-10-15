@@ -15,8 +15,9 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js')
     .then(async (reg)=>{
       console.log('SW registered')
-      // In production, call "/api" and let Netlify redirect map to the proxy function
-      const apiBase = import.meta.env.PROD ? '/api' : (import.meta.env.VITE_API_URL || 'http://localhost:3001')
+  // Build API base: in PROD it's "/api" (Netlify redirect → proxy), in DEV append "/api" to backend origin
+  const devBase = (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '') + '/api'
+  const apiBase = import.meta.env.PROD ? '/api' : devBase
       try {
         const u = JSON.parse(localStorage.getItem('rodina:user') || 'null')
         await initPush(reg, apiBase, u?.id || null)

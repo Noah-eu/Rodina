@@ -24,14 +24,19 @@ exports.handler = async function(event) {
     }
   }
   let path = event.path.replace('/.netlify/functions/proxy', '')
-  // Avoid accidental double slashes and duplicate /api segments
-  path = path.replace(/\/\/+/, '/').replace(/^\/api\/api\b/, '/api')
+  // Avoid accidental double slashes
+  path = path.replace(/\/\/+/, '/')
+  // Netlify redirect '/api/*' -> '/.netlify/functions/proxy/:splat' strips the leading '/api'.
+  // Our backend expects endpoints at '/api/...'. Ensure we prefix '/api' when missing.
+  let forwardPath = path.startsWith('/api/') ? path : ('/api' + (path.startsWith('/') ? path : ('/' + path)))
+  // Collapse potential duplicated '/api' (defensive)
+  forwardPath = forwardPath.replace(/^\/api\/api\b/, '/api')
   // ochrana: nesmíme proxovat zpět do Functions
   if (path.startsWith('/.netlify/functions')) {
     return { statusCode: 400, body: 'Invalid target path' }
   }
   const qs = event.rawQuery ? `?${event.rawQuery}` : ''
-  const url = API + path + qs
+  const url = API + forwardPath + qs
   const method = event.httpMethod
   // Odstranit hlavičky, které nemají být přeposílány (Netlify-specific)
   const { host, connection, 'content-length': contentLength, ...rest } = event.headers || {}
@@ -45,7 +50,7 @@ exports.handler = async function(event) {
     const contentType = res.headers.get('content-type') || 'application/octet-stream'
     return {
       statusCode: res.status,
-      headers: { 'content-type': contentType, 'x-proxy-target': url },
+      headers: { 'content-type': contentType, 'x-proxy-target': url, 'x-proxy-path': path },
       body: buf.toString('base64'),
       isBase64Encoded: true,
     }
