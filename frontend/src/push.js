@@ -8,7 +8,7 @@ function urlBase64ToUint8Array(base64String) {
   return outputArray
 }
 
-export async function initPush(swReg, apiBase=''){
+export async function initPush(swReg, apiBase='', userId=null){
   if (!('PushManager' in window)) return
   try{
     const perm = await Notification.requestPermission()
@@ -17,6 +17,6 @@ export async function initPush(swReg, apiBase=''){
     if (!pkRes.ok) return
     const { publicKey } = await pkRes.json()
     const sub = await swReg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) })
-    await fetch(`${apiBase}/api/push/subscribe`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sub) })
+    await fetch(`${apiBase}/api/push/subscribe`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ subscription: sub, userId }) })
   }catch(e){ /* ignore */ }
 }

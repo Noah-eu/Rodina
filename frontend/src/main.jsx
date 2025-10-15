@@ -16,7 +16,12 @@ if ('serviceWorker' in navigator) {
     .then(async (reg)=>{
       console.log('SW registered')
       const apiBase = import.meta.env.PROD ? '/.netlify/functions/proxy' : (import.meta.env.VITE_API_URL || 'http://localhost:3001')
-      await initPush(reg, apiBase)
+      try {
+        const u = JSON.parse(localStorage.getItem('rodina:user') || 'null')
+        await initPush(reg, apiBase, u?.id || null)
+      } catch (_) {
+        await initPush(reg, apiBase, null)
+      }
     })
     .catch(()=>{})
 }

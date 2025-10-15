@@ -344,12 +344,14 @@ app.get('/api/push/publicKey', (req, res)=>{
   }catch(e){ return res.status(404).json({ error: 'No VAPID key' }) }
 })
 app.post('/api/push/subscribe', (req, res)=>{
-  const subscription = req.body;
-  if(!subscription) return res.status(400).json({ error: 'Missing subscription' });
+  const { subscription, userId } = req.body || {};
+  if(!subscription || !subscription.endpoint) return res.status(400).json({ error: 'Missing subscription' });
   readDB();
   dbData.pushSubscriptions = Array.isArray(dbData.pushSubscriptions) ? dbData.pushSubscriptions : [];
-  const exists = dbData.pushSubscriptions.find(s => s.endpoint === subscription.endpoint);
-  if(!exists) dbData.pushSubscriptions.push(subscription);
+  const idx = dbData.pushSubscriptions.findIndex(s => s.endpoint === subscription.endpoint);
+  const record = { ...subscription, userId: userId || null };
+  if(idx === -1) dbData.pushSubscriptions.push(record);
+  else dbData.pushSubscriptions[idx] = record;
   writeDB();
   res.json({ ok: true });
 })
@@ -357,11 +359,14 @@ app.post('/api/push/subscribe', (req, res)=>{
 // Web Push: broadcast custom notification (used by frontend after Firestore message)
 app.post('/api/push/notify', async (req, res) => {
   try {
-    const { title, body } = req.body || {};
+    const { title, body, to } = req.body || {};
     const nTitle = (title && String(title)) || 'Rodina';
     const nBody = (body && String(body)) || 'Nové oznámení';
     readDB();
-    const subs = Array.isArray(dbData.pushSubscriptions) ? dbData.pushSubscriptions : [];
+    let subs = Array.isArray(dbData.pushSubscriptions) ? dbData.pushSubscriptions : [];
+    if (to) {
+      subs = subs.filter(s => s.userId === to);
+    }
     let sent = 0;
     for (const sub of subs) {
       try { await webpush.sendNotification(sub, JSON.stringify({ title: nTitle, body: nBody })); sent++; } catch(e) {}

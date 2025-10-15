@@ -318,7 +318,7 @@ function ChatWindow({ user, selectedUser }) {
         fetch(`${apiBase}/api/push/notify`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: `${user.name}`, body })
+          body: JSON.stringify({ title: `${user.name}`, body, to: selectedUser.id })
         }).catch(()=>{})
       } catch (_) {}
       setInput('')
