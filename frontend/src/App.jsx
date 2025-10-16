@@ -564,11 +564,18 @@ export default function App() {
     setSelectedUser(null)
   }
 
+  const [theme, setTheme] = useState(localStorage.getItem('rodina:theme') || 'default')
+
+  const handleThemeChange = (next) => {
+    setTheme(next)
+    try { localStorage.setItem('rodina:theme', next) } catch (_) {}
+  }
+
   if (!user) return <Auth onAuth={handleAuth} />
 
   return (
-    <div className={"app" + (selectedUser ? " chat-open" : " no-chat")}>
-      {isSettingsOpen && <SettingsModal user={user} onAuth={handleAuth} onClose={() => setIsSettingsOpen(false)} />}
+    <div className={"app" + (selectedUser ? " chat-open" : " no-chat") + (theme && theme!=='default' ? ` theme-${theme}` : '')}>
+      {isSettingsOpen && <SettingsModal user={user} theme={theme} onThemeChange={handleThemeChange} onAuth={handleAuth} onClose={() => setIsSettingsOpen(false)} />}
       <aside className="sidebar">
         <div className="sidebar-header">
           <h2>Rodina</h2>
@@ -610,7 +617,7 @@ export default function App() {
   )
 }
 
-function SettingsModal({ user, onAuth, onClose }) {
+function SettingsModal({ user, theme='default', onThemeChange=()=>{}, onAuth, onClose }) {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [avatarFile, setAvatarFile] = useState(null)
   const [feedback, setFeedback] = useState('')
@@ -655,6 +662,31 @@ function SettingsModal({ user, onAuth, onClose }) {
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <h2>Nastavení</h2>
+        <div>
+          <label style={{display:'block',marginBottom:8}}>Barva pozadí:</label>
+          <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+            {[
+              { key:'default', name:'Výchozí', sw:'#233044' },
+              { key:'green', name:'Zelená', sw:'#065f46' },
+              { key:'purple', name:'Fialová', sw:'#4c1d95' },
+              { key:'blue', name:'Světle modrá', sw:'#1e3a8a' },
+              { key:'orange', name:'Oranžová', sw:'#9a3412' },
+              { key:'red', name:'Červená', sw:'#7f1d1d' }
+            ].map(opt => (
+              <button key={opt.key}
+                type="button"
+                onClick={() => onThemeChange(opt.key)}
+                aria-pressed={theme===opt.key}
+                title={opt.name}
+                style={{
+                  width:42,height:42,borderRadius:12,cursor:'pointer',
+                  border: theme===opt.key ? '2px solid #fff' : '1px solid #2d3748',
+                  outline:'none', background: opt.sw
+                }}
+              />
+            ))}
+          </div>
+        </div>
         <form onSubmit={handleAvatarChange}>
           <label>Změnit profilovou fotku:</label>
           <img src={user.avatar || '/assets/default-avatar.png'} alt="Current Avatar" className="avatar-preview" />

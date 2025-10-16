@@ -63,6 +63,16 @@ body { background: var(--bg); color: var(--text); -webkit-font-smoothing: antial
 /*  Chat Area                  */
 /* ============================ */
 .chat { flex:1; display:flex; flex-direction:column; background: radial-gradient(circle at 20% 20%, #233044, #161f2c 70%); position:relative; min-height:0; }
+
+/* Theming */
+.app.theme-green .chat { background: radial-gradient(circle at 20% 20%, #064e3b, #052e29 70%); }
+.app.theme-purple .chat { background: radial-gradient(circle at 20% 20%, #3b0764, #1f1236 70%); }
+.app.theme-blue .chat { background: radial-gradient(circle at 20% 20%, #0f3a77, #0a254e 70%); }
+.app.theme-orange .chat { background: radial-gradient(circle at 20% 20%, #7a2e0c, #40190a 70%); }
+.app.theme-red .chat { background: radial-gradient(circle at 20% 20%, #7f1d1d, #3b0a0a 70%); }
+
+/* optional: subtle brand tint per theme */
+/* */
 .chat-window { flex:1; display:flex; flex-direction:column; min-height:0; }
 .messages { flex:1; overflow-y:auto; padding: 20px 18px 24px; display:flex; flex-direction:column; gap:18px; scroll-behavior:smooth; }
 .messages::-webkit-scrollbar-thumb { background:#32465a; }
