@@ -341,10 +341,26 @@ app.post('/api/call', async (req, res)=>{
 
 // Web Push: get VAPID public key and subscribe
 app.get('/api/push/publicKey', (req, res)=>{
-  try{
-    const saved = JSON.parse(fs.readFileSync(vapidPath, 'utf8'));
-    return res.json({ publicKey: saved.publicKey })
-  }catch(e){ return res.status(404).json({ error: 'No VAPID key' }) }
+  try {
+    // Prefer saved file
+    if (fs.existsSync(vapidPath)) {
+      const saved = JSON.parse(fs.readFileSync(vapidPath, 'utf8'));
+      if (saved && saved.publicKey) return res.json({ publicKey: saved.publicKey });
+    }
+    // Fallback to env
+    if (process.env.VAPID_PUBLIC_KEY) {
+      return res.json({ publicKey: process.env.VAPID_PUBLIC_KEY });
+    }
+    // As a last resort, try to generate (once) and read again
+    ensureVapid();
+    if (fs.existsSync(vapidPath)) {
+      const saved2 = JSON.parse(fs.readFileSync(vapidPath, 'utf8'));
+      if (saved2 && saved2.publicKey) return res.json({ publicKey: saved2.publicKey });
+    }
+    return res.status(404).json({ error: 'No VAPID key' })
+  } catch(e) {
+    return res.status(500).json({ error: 'Failed to read VAPID', details: e.message })
+  }
 })
 app.post('/api/push/subscribe', (req, res)=>{
   const { subscription, userId } = req.body || {};
@@ -364,9 +380,13 @@ app.get('/api/push/debug', (req, res) => {
   try {
     let hasVapid = false;
     try {
-      const saved = JSON.parse(fs.readFileSync(vapidPath, 'utf8'));
-      hasVapid = Boolean(saved && saved.publicKey && saved.privateKey);
+      if (fs.existsSync(vapidPath)) {
+        const saved = JSON.parse(fs.readFileSync(vapidPath, 'utf8'));
+        hasVapid = Boolean(saved && saved.publicKey && saved.privateKey);
+      }
     } catch (_) {}
+    // Consider env as valid VAPID presence as well
+    if (!hasVapid && process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) hasVapid = true;
     readDB();
     const count = Array.isArray(dbData.pushSubscriptions) ? dbData.pushSubscriptions.length : 0;
     res.json({ hasVapid, subscriptions: count });
