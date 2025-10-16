@@ -501,6 +501,8 @@ export default function App() {
   // Jednoduchý vyzváněcí tón (foreground only)
   function startRing(){
     try {
+      // Zkusit probudit AudioContext (pokud to prohlížeč dovolí)
+      try { if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') audioCtxRef.current.resume().catch(()=>{}) } catch{}
       // Upřednostni audio soubor, pokud existuje a není ztlumený
       if (!ringMuted) {
         if (!ringAudioRef.current) {
@@ -1055,7 +1057,7 @@ export default function App() {
         ) : null}
       </main>
       {/* Call overlay */}
-      {(callState.incoming || callState.outgoing || callState.active) && (
+      {(callState.incoming || callState.outgoing || callState.active || callState.connecting) && (
         <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:3000}}>
           <div style={{background:'#111827',border:'1px solid #374151',borderRadius:16,padding:16,width:'min(900px,96vw)',minHeight: callState.kind==='video' ? 420 : 220, display:'flex',flexDirection:'column',gap:12}}>
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
@@ -1083,6 +1085,16 @@ export default function App() {
                   <input type="checkbox" checked={ringMuted} onChange={(e)=>{ setRingMuted(e.target.checked); try { localStorage.setItem('rodina:ringMuted', e.target.checked ? '1' : '0') } catch{} }} />
                   Ztlumit vyzvánění
                 </label>
+                {!audioReady && (
+                  <button onClick={async()=>{
+                    try {
+                      if (!audioCtxRef.current) audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)()
+                      if (audioCtxRef.current.state === 'suspended') await audioCtxRef.current.resume()
+                      setAudioReady(true)
+                      startRing()
+                    } catch(_){}
+                  }} style={{background:'#1f2937',border:'1px solid #374151',color:'#cbd5e1',borderRadius:6,padding:'6px 10px',cursor:'pointer'}}>Odemknout zvuk</button>
+                )}
               </div>
             )}
             {callState.incoming && (
