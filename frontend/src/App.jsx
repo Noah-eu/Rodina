@@ -456,6 +456,8 @@ export default function App() {
   const apiBaseRef = useRef(null)
   // Diagnostika
   const [diag, setDiag] = useState({ pusher: 'off', sw: 'off', pushPerm: 'default', pushSub: false, iceCount: 0, apiBase: '' })
+  // Aktuální typ hovoru (audio/video) mimo React state, aby se předešlo stale closures
+  const callKindRef = useRef('audio')
 
   // Po prvním gestu uživatele odemkni AudioContext a případně požádej o notifikační oprávnění
   useEffect(() => {
@@ -592,6 +594,7 @@ export default function App() {
             const person = byId || users.find(u => (u.name||'').toLowerCase() === fromName.toLowerCase())
             if (person) setSelectedUser(person)
             peerIdRef.current = from || (person && person.id) || null
+            callKindRef.current = kind || 'audio'
             setCallState(cs => ({ ...cs, incoming: true, outgoing: false, active: false, connecting: false, kind, from: from || null, to: (user&&user.id)||null, remoteName: fromName || (person && person.name) || '' }))
             if (audioReady) startRing()
             // Timeout pro nezvednutý příchozí hovor (45s)
@@ -624,6 +627,7 @@ export default function App() {
       }
       if ((d.type === 'call') && d.from) {
         peerIdRef.current = d.from
+        callKindRef.current = d.kind || 'audio'
         setCallState(cs => ({ ...cs, incoming: true, outgoing: false, active: false, connecting: false, kind: d.kind || 'audio', from: d.from, to: (user&&user.id)||null, remoteName: d.fromName || '' }))
         if (audioReady) startRing()
         // Timeout pro nezvednutý příchozí hovor (45s)
@@ -688,6 +692,7 @@ export default function App() {
         // Zahodit staré příchozí hovory starší než 60s
         if (info.ts && (Date.now() - info.ts > 60000)) return
         peerIdRef.current = info.from
+        callKindRef.current = info.kind || 'audio'
         // Auto-select volajícího kontaktu (pokud existuje v seznamu)
         try {
           const list = usersRef.current || []
@@ -720,6 +725,7 @@ export default function App() {
         if (!data || data.to !== user.id) return
         // Zpracuj offer bez závislosti na starém callState v closure
         peerIdRef.current = data.from
+        callKindRef.current = data.kind || callKindRef.current || 'audio'
         await ensureLocalMedia(data.kind || 'audio')
         await ensurePeerConnection(data.kind || 'audio')
         try { await pcRef.current.setRemoteDescription(data.sdp) } catch(_){}
@@ -753,12 +759,13 @@ export default function App() {
         if (!data || data.to !== user.id) return
         // Callee přijal — volající teď může poslat offer
         try {
-          await ensurePeerConnection(callState.kind)
-          const offer = await pcRef.current.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: callState.kind==='video' })
+          const k = callKindRef.current || callState.kind || 'audio'
+          await ensurePeerConnection(k)
+          const offer = await pcRef.current.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: k==='video' })
           await pcRef.current.setLocalDescription(offer)
           await fetch(`${apiBaseRef.current}/rt/offer`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ from: user.id, to: peerIdRef.current, sdp: pcRef.current.localDescription, kind: callState.kind })
+            body: JSON.stringify({ from: user.id, to: peerIdRef.current, sdp: pcRef.current.localDescription, kind: k })
           })
         } catch (_) {}
       }
@@ -843,6 +850,7 @@ export default function App() {
   async function startCall(kind='audio'){
     if (!selectedUser) return
     peerIdRef.current = selectedUser.id
+    callKindRef.current = kind
     setCallState({ active: false, incoming: false, outgoing: true, kind, from: user.id, to: selectedUser.id, connecting: true, remoteName: selectedUser.name })
     // Oznám příchozí hovor druhé straně (ring); offer se pošle až po explicitním accept
     try { await fetch(`${apiBaseRef.current}/call`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: user.id, to: selectedUser.id, kind, fromName: user.name }) }) } catch(_){}
@@ -880,8 +888,9 @@ export default function App() {
   async function acceptCall(){
     setCallState(cs => ({ ...cs, incoming: false, connecting: true }))
     try {
-      await ensureLocalMedia(callState.kind)
-      await ensurePeerConnection(callState.kind)
+      const k = callKindRef.current || callState.kind || 'audio'
+      await ensureLocalMedia(k)
+      await ensurePeerConnection(k)
       // signalizuj protistraně, že může poslat offer
       if (peerIdRef.current) {
         await fetch(`${apiBaseRef.current}/rt/accept`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ from: user.id, to: peerIdRef.current }) })
@@ -1006,24 +1015,6 @@ export default function App() {
 
   return (
     <div className={"app" + (selectedUser ? " chat-open" : " no-chat") + (theme && theme!=='default' ? ` theme-${theme}` : '')}>
-      {/* Diagnostický proužek */}
-      <div style={{position:'fixed',left:10,bottom:10,zIndex:4000,background:'rgba(0,0,0,0.5)',color:'#cbd5e1',padding:'6px 10px',borderRadius:8,fontSize:11,border:'1px solid #374151',display:'flex',gap:8,alignItems:'center'}}>
-        <span>Pusher: {diag.pusher}</span>
-        <span>SW: {diag.sw}</span>
-        <span>Push: {diag.pushPerm}/{diag.pushSub?'sub':'no-sub'}</span>
-        <span>ICE: {diag.iceCount}</span>
-        <span>API: {diag.apiBase}</span>
-        <button onClick={async()=>{
-          try{
-            const reg = await navigator.serviceWorker?.ready
-            const base = apiBaseRef.current
-            const u = JSON.parse(localStorage.getItem('rodina:user') || 'null')
-            await initPush(reg, base, u?.id || null)
-            const sub = await reg?.pushManager?.getSubscription()
-            setDiag(d => ({ ...d, pushSub: Boolean(sub), pushPerm: (typeof Notification!=='undefined'?Notification.permission:'unsupported') }))
-          }catch(_){ }
-        }} style={{marginLeft:8,background:'#1f2937',border:'1px solid #374151',color:'#cbd5e1',borderRadius:6,padding:'3px 8px',cursor:'pointer'}}>Re-sub</button>
-      </div>
       {isSettingsOpen && <SettingsModal user={user} theme={theme} onThemeChange={handleThemeChange} onAuth={handleAuth} onClose={() => setIsSettingsOpen(false)} />}
       <aside className="sidebar">
         <div className="sidebar-header">

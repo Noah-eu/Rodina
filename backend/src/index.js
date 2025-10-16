@@ -229,7 +229,15 @@ app.post('/api/message', upload.single('file'), async (req, res) => {
         JSON.stringify({ type: 'message', title: 'Rodina', body, to: msg.to, from: msg.from, ts: Date.now() }),
         { TTL: 600, headers: { Urgency: 'normal' } }
       )
-    }catch(e){}
+    }catch(e){
+      // Remove dead subscriptions (404/410)
+      const sc = e && (e.statusCode || e.code || e.status);
+      if (sc === 404 || sc === 410) {
+        readDB();
+        dbData.pushSubscriptions = (dbData.pushSubscriptions||[]).filter(s => s.endpoint !== (sub && sub.endpoint))
+        writeDB();
+      }
+    }
   }
   res.json(msg);
 });
@@ -365,7 +373,14 @@ app.post('/api/call', async (req, res)=>{
         JSON.stringify({ type: 'call', title: 'Rodina', body: `Příchozí ${kind}${who}` , fromName: info.fromName || '', from: info.from || null, kind: info.kind || 'audio', ts: info.ts || Date.now() }),
         { TTL: 45, headers: { Urgency: 'high' } }
       )
-    }catch(e){}
+    }catch(e){
+      const sc = e && (e.statusCode || e.code || e.status);
+      if (sc === 404 || sc === 410) {
+        readDB();
+        dbData.pushSubscriptions = (dbData.pushSubscriptions||[]).filter(s => s.endpoint !== (sub && sub.endpoint))
+        writeDB();
+      }
+    }
   }
   res.json({ ok: true })
 })
@@ -439,7 +454,15 @@ app.post('/api/push/notify', async (req, res) => {
     }
     let sent = 0;
     for (const sub of subs) {
-      try { await webpush.sendNotification(sub, JSON.stringify({ title: nTitle, body: nBody })); sent++; } catch(e) {}
+      try { await webpush.sendNotification(sub, JSON.stringify({ title: nTitle, body: nBody })); sent++; }
+      catch(e) {
+        const sc = e && (e.statusCode || e.code || e.status);
+        if (sc === 404 || sc === 410) {
+          readDB();
+          dbData.pushSubscriptions = (dbData.pushSubscriptions||[]).filter(s => s.endpoint !== (sub && sub.endpoint))
+          writeDB();
+        }
+      }
     }
     return res.json({ ok: true, sent });
   } catch (e) {
