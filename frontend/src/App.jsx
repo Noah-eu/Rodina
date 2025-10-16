@@ -5,6 +5,7 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 import bcrypt from 'bcryptjs'
 import { onSnapshot, orderBy, addDoc, serverTimestamp } from 'firebase/firestore'
 import { initPush } from './push'
+import Pusher from 'pusher-js'
 
 // Komponenta pro zobrazení jednoho uživatele v seznamu
 function UserListItem({ user, isSelected, onSelect, unread = 0 }) {
@@ -422,6 +423,27 @@ export default function App() {
   const audioCtxRef = useRef(null)
   const [audioReady, setAudioReady] = useState(false)
 
+  // --- Hovory (audio/video) ---
+  const [callState, setCallState] = useState({
+    active: false,
+    incoming: false,
+    outgoing: false,
+    kind: 'audio', // 'audio' | 'video'
+    from: null,
+    to: null,
+    connecting: false,
+    remoteName: ''
+  })
+  const pcRef = useRef(null)
+  const localStreamRef = useRef(null)
+  const remoteStreamRef = useRef(null)
+  const localVideoRef = useRef(null)
+  const remoteVideoRef = useRef(null)
+  const pusherRef = useRef(null)
+  const channelRef = useRef(null)
+  const peerIdRef = useRef(null)
+  const apiBaseRef = useRef(null)
+
   // Po prvním gestu uživatele odemkni AudioContext a případně požádej o notifikační oprávnění
   useEffect(() => {
     const unlock = async () => {
@@ -475,6 +497,170 @@ export default function App() {
       }
     }
   }, [])
+
+  // API base pro hovory a ICE
+  useEffect(() => {
+    const base = import.meta.env.PROD ? '/api' : ((import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '') + '/api')
+    apiBaseRef.current = base
+  }, [])
+
+  // Inicializace Pusher po přihlášení
+  useEffect(() => {
+    if (!user) return
+    try {
+      const key = import.meta.env.VITE_PUSHER_KEY
+      const cluster = import.meta.env.VITE_PUSHER_CLUSTER || 'eu'
+      if (!key) return
+      const p = new Pusher(key, { cluster, forceTLS: true })
+      const ch = p.subscribe('famcall')
+      pusherRef.current = p
+      channelRef.current = ch
+
+      const onIncoming = (info) => {
+        if (!info || info.to !== user.id) return
+        peerIdRef.current = info.from
+        setCallState(cs => ({
+          ...cs,
+          incoming: true,
+          outgoing: false,
+          active: false,
+          connecting: false,
+          kind: info.kind || 'audio',
+          from: info.from,
+          to: info.to,
+          remoteName: info.fromName || ''
+        }))
+      }
+      const onOffer = async (data) => {
+        if (!data || data.to !== user.id) return
+        peerIdRef.current = data.from
+        await ensureLocalMedia(data.kind || 'audio')
+        await ensurePeerConnection(data.kind || 'audio')
+        try { await pcRef.current.setRemoteDescription(data.sdp) } catch(_){}
+        try {
+          const answer = await pcRef.current.createAnswer()
+          await pcRef.current.setLocalDescription(answer)
+          await fetch(`${apiBaseRef.current}/rt/answer`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ from: user.id, to: data.from, sdp: pcRef.current.localDescription, kind: data.kind || 'audio' })
+          })
+          setCallState(cs => ({ ...cs, active: true, incoming: false, outgoing: false, connecting: true }))
+        } catch (e) {}
+      }
+      const onAnswer = async (data) => {
+        if (!data || data.to !== user.id) return
+        try { await pcRef.current?.setRemoteDescription(data.sdp) } catch(_){}
+        setCallState(cs => ({ ...cs, connecting: false, active: true }))
+      }
+      const onIce = async (data) => {
+        if (!data) return
+        // Candidate může přijít oběma směrům; filtruj na aktuálního peerId
+        const peer = peerIdRef.current
+        if (data.from && peer && data.from !== peer) return
+        try { await pcRef.current?.addIceCandidate(data.candidate) } catch(_){}
+      }
+
+      ch.bind('incoming_call', onIncoming)
+      ch.bind('webrtc_offer', onOffer)
+      ch.bind('webrtc_answer', onAnswer)
+      ch.bind('webrtc_ice', onIce)
+
+      return () => {
+        try { ch.unbind('incoming_call', onIncoming); ch.unbind('webrtc_offer', onOffer); ch.unbind('webrtc_answer', onAnswer); ch.unbind('webrtc_ice', onIce); p.unsubscribe('famcall'); p.disconnect() } catch(_){}
+      }
+    } catch (_) {}
+  }, [user])
+
+  // Pomocné: zajištění lokálního média
+  async function ensureLocalMedia(kind='audio'){
+    if (localStreamRef.current) return localStreamRef.current
+    try {
+      const constraints = { audio: true, video: kind === 'video' }
+      const stream = await navigator.mediaDevices.getUserMedia(constraints)
+      localStreamRef.current = stream
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = stream
+        try { await localVideoRef.current.play() } catch(_){}
+      }
+      return stream
+    } catch (e) {
+      alert('Nelze získat přístup k mikrofonu/kameře: ' + (e.message || e.name))
+      throw e
+    }
+  }
+
+  // Pomocné: vytvoř/nahlaš PeerConnection
+  async function ensurePeerConnection(kind='audio'){
+    if (pcRef.current) return pcRef.current
+    const iceResp = await fetch(`${apiBaseRef.current}/ice`).then(r=>r.json()).catch(()=>({ iceServers: [ { urls: 'stun:stun.l.google.com:19302' } ] }))
+    const pc = new RTCPeerConnection({ iceServers: iceResp.iceServers || [ { urls: 'stun:stun.l.google.com:19302' } ] })
+    pcRef.current = pc
+    const local = await ensureLocalMedia(kind)
+    local.getTracks().forEach(t => pc.addTrack(t, local))
+    pc.ontrack = (ev) => {
+      const [remote] = ev.streams
+      remoteStreamRef.current = remote
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = remote
+        try { remoteVideoRef.current.play() } catch(_){}
+      }
+    }
+    pc.onicecandidate = async (e) => {
+      if (e.candidate && peerIdRef.current) {
+        try {
+          await fetch(`${apiBaseRef.current}/rt/ice`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ from: user.id, to: peerIdRef.current, candidate: e.candidate })
+          })
+        } catch(_){}
+      }
+    }
+    return pc
+  }
+
+  async function startCall(kind='audio'){
+    if (!selectedUser) return
+    peerIdRef.current = selectedUser.id
+    setCallState({ active: false, incoming: false, outgoing: true, kind, from: user.id, to: selectedUser.id, connecting: true, remoteName: selectedUser.name })
+    // Oznám příchozí hovor druhé straně (ring)
+    try { await fetch(`${apiBaseRef.current}/call`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: user.id, to: selectedUser.id, kind, fromName: user.name }) }) } catch(_){}
+    // Vytvoř nabídku
+    try {
+      await ensurePeerConnection(kind)
+      const offer = await pcRef.current.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: kind==='video' })
+      await pcRef.current.setLocalDescription(offer)
+      await fetch(`${apiBaseRef.current}/rt/offer`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from: user.id, to: selectedUser.id, sdp: pcRef.current.localDescription, kind })
+      })
+    } catch (e) {
+      alert('Hovor se nepodařilo zahájit: ' + (e.message || e.name))
+      endCall()
+    }
+  }
+
+  function endCall(){
+    try { pcRef.current?.getSenders?.().forEach(s => { try { s.track && s.track.stop() } catch(_){} }) } catch(_){ }
+    try { localStreamRef.current?.getTracks?.().forEach(t => t.stop()) } catch(_){ }
+    try { pcRef.current?.close() } catch(_){ }
+    pcRef.current = null
+    localStreamRef.current = null
+    remoteStreamRef.current = null
+    if (localVideoRef.current) localVideoRef.current.srcObject = null
+    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null
+    peerIdRef.current = null
+    setCallState({ active: false, incoming: false, outgoing: false, kind: 'audio', from: null, to: null, connecting: false, remoteName: '' })
+  }
+
+  async function acceptCall(){
+    // V reálu čekáme na offer handler, který pošle answer
+    setCallState(cs => ({ ...cs, incoming: false, connecting: true }))
+    try { await ensureLocalMedia(callState.kind); await ensurePeerConnection(callState.kind) } catch(_){}
+  }
+
+  function declineCall(){
+    endCall()
+  }
 
   // Načítání seznamu ostatních uživatelů + unread listeners
   useEffect(() => {
@@ -601,18 +787,53 @@ export default function App() {
               <button aria-label="Zpět" onClick={() => setSelectedUser(null)} style={{background:'#1f2530',border:'1px solid #2d3748',color:'#e6edf3',width:44,height:44,borderRadius:12,cursor:'pointer',fontSize:'20px',display:'flex',alignItems:'center',justifyContent:'center'}}>
                 ←
               </button>
-              <div style={{display:'flex',alignItems:'center',gap:'12px'}}>
+              <div style={{display:'flex',alignItems:'center',gap:'12px',flex:1}}>
                 <img src={selectedUser.avatar || '/assets/default-avatar.png'} alt={selectedUser.name} style={{width:48,height:48,borderRadius:14,objectFit:'cover',border:'1px solid #3d4b5c'}} />
                 <div style={{display:'flex',flexDirection:'column'}}>
                   <strong style={{fontSize:'16px'}}>{selectedUser.name}</strong>
                   <span style={{fontSize:'12px',color:'#9ca3af'}}>{selectedUser.online ? 'Online' : 'Offline'}</span>
                 </div>
               </div>
+              <div style={{marginLeft:'auto',display:'flex',gap:10}}>
+                <button title="Zavolat" aria-label="Zavolat" onClick={() => startCall('audio')} style={{background:'#1f2530',border:'1px solid #2d3748',color:'#e6edf3',width:44,height:44,borderRadius:12,cursor:'pointer',fontSize:'18px',display:'flex',alignItems:'center',justifyContent:'center'}}>📞</button>
+                <button title="Videohovor" aria-label="Videohovor" onClick={() => startCall('video')} style={{background:'#1f2530',border:'1px solid #2d3748',color:'#e6edf3',width:44,height:44,borderRadius:12,cursor:'pointer',fontSize:'18px',display:'flex',alignItems:'center',justifyContent:'center'}}>🎥</button>
+              </div>
             </div>
             <ChatWindow user={user} selectedUser={selectedUser} />
           </div>
         ) : null}
       </main>
+      {/* Call overlay */}
+      {(callState.incoming || callState.outgoing || callState.active) && (
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:3000}}>
+          <div style={{background:'#111827',border:'1px solid #374151',borderRadius:16,padding:16,width:'min(900px,96vw)',minHeight: callState.kind==='video' ? 420 : 220, display:'flex',flexDirection:'column',gap:12}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+              <strong>{callState.incoming ? 'Příchozí hovor' : (callState.outgoing && !callState.active ? 'Volám…' : 'Hovor')}</strong>
+              <button onClick={endCall} style={{background:'#b91c1c',border:'1px solid #7f1d1d',color:'#fff',borderRadius:10,padding:'8px 12px',cursor:'pointer'}}>Zavěsit</button>
+            </div>
+            {callState.kind==='video' ? (
+              <div style={{position:'relative',display:'flex',gap:12,flex:1,minHeight:300}}>
+                <video ref={remoteVideoRef} playsInline autoPlay muted={false} style={{width:'100%',height:'100%',background:'#0b1220',borderRadius:12,border:'1px solid #253243',objectFit:'cover'}} />
+                <video ref={localVideoRef} playsInline autoPlay muted style={{position:'absolute',right:12,bottom:12,width:180,height:120,background:'#0b1220',borderRadius:10,border:'1px solid #253243',objectFit:'cover'}} />
+              </div>
+            ) : (
+              <div style={{display:'flex',alignItems:'center',justifyContent:'center',flex:1,minHeight:120,color:'#e6edf3'}}>
+                <div style={{textAlign:'center'}}>
+                  <div style={{fontSize:48,marginBottom:8}}>📞</div>
+                  <div>{callState.remoteName || 'Volání'}</div>
+                  {callState.connecting && <div style={{fontSize:12,opacity:.8,marginTop:6}}>Připojuji…</div>}
+                </div>
+              </div>
+            )}
+            {callState.incoming && (
+              <div style={{display:'flex',gap:12,justifyContent:'center'}}>
+                <button onClick={acceptCall} style={{background:'#059669',border:'1px solid #047857',color:'#fff',borderRadius:10,padding:'10px 16px',cursor:'pointer'}}>Přijmout</button>
+                <button onClick={declineCall} style={{background:'#b91c1c',border:'1px solid #7f1d1d',color:'#fff',borderRadius:10,padding:'10px 16px',cursor:'pointer'}}>Odmítnout</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
