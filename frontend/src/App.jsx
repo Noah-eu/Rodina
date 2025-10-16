@@ -422,6 +422,9 @@ export default function App() {
   // Audio notifikace – odemčení a sdílený kontext
   const audioCtxRef = useRef(null)
   const [audioReady, setAudioReady] = useState(false)
+  const ringTimerRef = useRef(null)
+  const ringGainRef = useRef(null)
+  const ringOscRef = useRef(null)
 
   // --- Hovory (audio/video) ---
   const [callState, setCallState] = useState({
@@ -486,6 +489,38 @@ export default function App() {
     } catch {}
   }
 
+  // Jednoduchý vyzváněcí tón (foreground only)
+  function startRing(){
+    try {
+      const ctx = audioCtxRef.current
+      if (!ctx) return
+      stopRing()
+      const o = ctx.createOscillator(); const g = ctx.createGain()
+      o.type = 'sine'; o.frequency.value = 1200
+      g.gain.value = 0
+      o.connect(g); g.connect(ctx.destination)
+      o.start()
+      ringOscRef.current = o
+      ringGainRef.current = g
+      const tick = () => {
+        const t = ctx.currentTime
+        g.gain.cancelScheduledValues(t)
+        g.gain.setValueAtTime(0.0001, t)
+        g.gain.exponentialRampToValueAtTime(0.12, t + 0.05)
+        g.gain.setValueAtTime(0.12, t + 0.75)
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.85)
+      }
+      tick()
+      ringTimerRef.current = setInterval(tick, 2000)
+    } catch {}
+  }
+  function stopRing(){
+    try { if (ringTimerRef.current) { clearInterval(ringTimerRef.current); ringTimerRef.current = null } } catch{}
+    try { if (ringGainRef.current) { const ctx = audioCtxRef.current; const t = ctx?.currentTime || 0; ringGainRef.current.gain.setValueAtTime(0.0001, t) } } catch{}
+    try { ringOscRef.current?.stop(); ringOscRef.current?.disconnect(); ringGainRef.current?.disconnect() } catch{}
+    ringOscRef.current = null; ringGainRef.current = null
+  }
+
   // Načtení uživatele z localStorage při startu
   useEffect(() => {
     const storedUser = localStorage.getItem('rodina:user')
@@ -510,10 +545,15 @@ export default function App() {
         const byName = users.find(u => (u.name||'').toLowerCase() === (d.fromName||'').toLowerCase())
         if (byName) setSelectedUser(byName)
       }
+      if ((d.type === 'call') && d.from) {
+        peerIdRef.current = d.from
+        setCallState(cs => ({ ...cs, incoming: true, outgoing: false, active: false, connecting: false, kind: d.kind || 'audio', from: d.from, to: (user&&user.id)||null, remoteName: d.fromName || '' }))
+        if (audioReady) startRing()
+      }
     }
     window.addEventListener('message', onMsg)
     return () => window.removeEventListener('message', onMsg)
-  }, [users])
+  }, [users, audioReady, user])
 
   // API base pro hovory a ICE
   useEffect(() => {
@@ -547,11 +587,12 @@ export default function App() {
           to: info.to,
           remoteName: info.fromName || ''
         }))
+        if (audioReady) startRing()
       }
       const onOffer = async (data) => {
         if (!data || data.to !== user.id) return
-        // Ignoruj offer, pokud příjemce zatím nepřijal
-        if (!callState.incoming && !callState.active) return
+        // Povolit i při connecting (po kliknutí na Přijmout)
+        if (!callState.incoming && !callState.active && !callState.connecting) return
         peerIdRef.current = data.from
         await ensureLocalMedia(data.kind || 'audio')
         await ensurePeerConnection(data.kind || 'audio')
@@ -563,12 +604,14 @@ export default function App() {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ from: user.id, to: data.from, sdp: pcRef.current.localDescription, kind: data.kind || 'audio' })
           })
+          stopRing()
           setCallState(cs => ({ ...cs, active: true, incoming: false, outgoing: false, connecting: true }))
         } catch (e) {}
       }
       const onAnswer = async (data) => {
         if (!data || data.to !== user.id) return
         try { await pcRef.current?.setRemoteDescription(data.sdp) } catch(_){}
+        stopRing()
         setCallState(cs => ({ ...cs, connecting: false, active: true }))
       }
       const onIce = async (data) => {
@@ -595,6 +638,7 @@ export default function App() {
 
       const onDecline = (data) => {
         if (!data || data.to !== user.id) return
+        stopRing()
         endCall()
       }
 
@@ -602,6 +646,7 @@ export default function App() {
         if (!data) return
         const peer = peerIdRef.current
         if (data.from && peer && data.from !== peer) return
+        stopRing()
         endCall()
       }
 
@@ -680,6 +725,7 @@ export default function App() {
     if (peerIdRef.current) {
       try { await fetch(`${apiBaseRef.current}/rt/hangup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: user.id, to: peerIdRef.current }) }) } catch(_){}
     }
+    stopRing()
     try { pcRef.current?.getSenders?.().forEach(s => { try { s.track && s.track.stop() } catch(_){} }) } catch(_){ }
     try { localStreamRef.current?.getTracks?.().forEach(t => t.stop()) } catch(_){ }
     try { pcRef.current?.close() } catch(_){ }
@@ -701,6 +747,7 @@ export default function App() {
       if (peerIdRef.current) {
         await fetch(`${apiBaseRef.current}/rt/accept`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ from: user.id, to: peerIdRef.current }) })
       }
+      stopRing()
     } catch(_){}
   }
 
@@ -710,6 +757,7 @@ export default function App() {
     if (peer) {
       fetch(`${apiBaseRef.current}/rt/decline`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ from: user.id, to: peer }) }).catch(()=>{})
     }
+    stopRing()
     endCall()
   }
 
