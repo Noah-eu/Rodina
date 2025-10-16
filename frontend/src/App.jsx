@@ -498,6 +498,23 @@ export default function App() {
     }
   }, [])
 
+  // Reakce na kliknutí notifikace ze SW (sw:notifyClick)
+  useEffect(() => {
+    function onMsg(ev){
+      if (!ev || !ev.data || ev.data.type !== 'sw:notifyClick') return
+      const d = ev.data.data || {}
+      if (!users || !users.length) return
+      const byId = users.find(u => u.id === d.from)
+      if (byId) setSelectedUser(byId)
+      else if (d.fromName){
+        const byName = users.find(u => (u.name||'').toLowerCase() === (d.fromName||'').toLowerCase())
+        if (byName) setSelectedUser(byName)
+      }
+    }
+    window.addEventListener('message', onMsg)
+    return () => window.removeEventListener('message', onMsg)
+  }, [users])
+
   // API base pro hovory a ICE
   useEffect(() => {
     const base = import.meta.env.PROD ? '/api' : ((import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '') + '/api')
@@ -842,7 +859,7 @@ export default function App() {
         <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:3000}}>
           <div style={{background:'#111827',border:'1px solid #374151',borderRadius:16,padding:16,width:'min(900px,96vw)',minHeight: callState.kind==='video' ? 420 : 220, display:'flex',flexDirection:'column',gap:12}}>
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-              <strong>{callState.incoming ? 'Příchozí hovor' : (callState.outgoing && !callState.active ? 'Volám…' : 'Hovor')}</strong>
+              <strong>{callState.incoming ? `Příchozí ${callState.kind==='video'?'videohovor':'hovor'}${callState.remoteName?` od ${callState.remoteName}`:''}` : (callState.outgoing && !callState.active ? 'Volám…' : 'Hovor')}</strong>
               <button onClick={endCall} style={{background:'#b91c1c',border:'1px solid #7f1d1d',color:'#fff',borderRadius:10,padding:'8px 12px',cursor:'pointer'}}>Zavěsit</button>
             </div>
             {callState.kind==='video' ? (

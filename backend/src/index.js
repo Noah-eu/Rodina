@@ -215,14 +215,21 @@ app.post('/api/message', upload.single('file'), async (req, res) => {
   broadcast('message', msg);
 
   // Push oznámení
-  const subs = Array.isArray(dbData.pushSubscriptions) ? dbData.pushSubscriptions : [];
+  let subs = Array.isArray(dbData.pushSubscriptions) ? dbData.pushSubscriptions : [];
+  if (msg.to) subs = subs.filter(s => s.userId === msg.to);
   const body = msg.type==='text' && msg.text ? msg.text
     : msg.type==='image' ? 'Poslal(a) fotku'
     : msg.type==='video' ? 'Poslal(a) video'
     : msg.type==='audio' ? 'Poslal(a) hlasovou zprávu'
     : 'Nová zpráva';
   for (const sub of subs){
-    try{ await webpush.sendNotification(sub, JSON.stringify({ title: 'Rodina', body })) }catch(e){}
+    try{
+      await webpush.sendNotification(
+        sub,
+        JSON.stringify({ type: 'message', title: 'Rodina', body, to: msg.to, from: msg.from, ts: Date.now() }),
+        { TTL: 600, headers: { Urgency: 'normal' } }
+      )
+    }catch(e){}
   }
   res.json(msg);
 });
@@ -336,8 +343,16 @@ app.post('/api/call', async (req, res)=>{
   if (info && info.to) {
     subs = subs.filter(s => s.userId === info.to);
   }
+  const kind = (info && info.kind)==='video' ? 'videohovor' : 'hovor';
+  const who = (info && info.fromName) ? ` od ${info.fromName}` : '';
   for (const sub of subs){
-    try{ await webpush.sendNotification(sub, JSON.stringify({ title: 'Rodina', body: 'Příchozí hovor' })) }catch(e){}
+    try{
+      await webpush.sendNotification(
+        sub,
+        JSON.stringify({ type: 'call', title: 'Rodina', body: `Příchozí ${kind}${who}` , fromName: info.fromName || '', from: info.from || null, kind: info.kind || 'audio', ts: Date.now() }),
+        { TTL: 45, headers: { Urgency: 'high' } }
+      )
+    }catch(e){}
   }
   res.json({ ok: true })
 })
