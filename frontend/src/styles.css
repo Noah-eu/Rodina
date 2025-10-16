@@ -167,13 +167,14 @@ body { background: var(--bg); color: var(--text); -webkit-font-smoothing: antial
 }
 .send-form .send-icon-btn[disabled] { opacity:.6; cursor:not-allowed; }
 
-/* Hide sidebar on mobile when chat is open */
+/* Hide sidebar on mobile when chat is open; expand sidebar when no chat */
 @media (max-width: 899px) {
   .app.chat-open .sidebar { display:none; }
+  .app.no-chat .sidebar { max-height: 100%; height: 100%; }
+  .app.no-chat .chat { display: none; }
 }
 
-/* Empty state */
-.chat > .empty-state { margin:auto; text-align:center; max-width:280px; opacity:.65; font-size:15px; line-height:1.5; }
+/* Empty state removed */
 
 /* ============================ */
 /*  Auth / Forms               */

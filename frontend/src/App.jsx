@@ -567,7 +567,7 @@ export default function App() {
   if (!user) return <Auth onAuth={handleAuth} />
 
   return (
-    <div className={"app" + (selectedUser ? " chat-open" : "")}>
+    <div className={"app" + (selectedUser ? " chat-open" : " no-chat")}>
       {isSettingsOpen && <SettingsModal user={user} onAuth={handleAuth} onClose={() => setIsSettingsOpen(false)} />}
       <aside className="sidebar">
         <div className="sidebar-header">
@@ -604,11 +604,7 @@ export default function App() {
             </div>
             <ChatWindow user={user} selectedUser={selectedUser} />
           </div>
-        ) : (
-          <div className="empty-state">
-            Vyberte uživatele ze seznamu pro zahájení konverzace.
-          </div>
-        )}
+        ) : null}
       </main>
     </div>
   )
