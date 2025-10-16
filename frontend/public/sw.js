@@ -29,17 +29,23 @@ self.addEventListener('push', function(event) {
 
 self.addEventListener('notificationclick', function(event){
   event.notification.close();
-  const d = event.notification && event.notification.data || {}
-  // Otevřít aplikaci a případně přesměrovat na volajícího
-  const url = '/'
+  const d = (event.notification && event.notification.data) || {}
+  // Otevřít aplikaci; pokud neexistuje okno, přenes data přes query parametry
   event.waitUntil((async () => {
     const all = await clients.matchAll({ type: 'window', includeUncontrolled: true })
     const win = all.find(c => 'focus' in c)
     if (win) {
       await win.focus()
-      // volitelně můžeme poslat zprávu do otevřené stránky o příchozím hovoru
       try { win.postMessage({ type: 'sw:notifyClick', data: d }) } catch(_){}
     } else {
+      const params = new URLSearchParams()
+      params.set('notify', '1')
+      if (d.type) params.set('ntype', d.type)
+      if (d.from) params.set('from', d.from)
+      if (d.fromName) params.set('fromName', d.fromName)
+      if (d.kind) params.set('kind', d.kind)
+      if (d.ts) params.set('ts', String(d.ts))
+      const url = '/?' + params.toString()
       await clients.openWindow(url)
     }
   })())

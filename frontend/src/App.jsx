@@ -425,6 +425,13 @@ export default function App() {
   const ringTimerRef = useRef(null)
   const ringGainRef = useRef(null)
   const ringOscRef = useRef(null)
+  // Souborový ringtone a nastavení ztlumení
+  const ringAudioRef = useRef(null)
+  const [ringMuted, setRingMuted] = useState(() => {
+    try { return localStorage.getItem('rodina:ringMuted') === '1' } catch { return false }
+  })
+  const incomingTimeoutRef = useRef(null)
+  const clearIncomingTimeout = () => { try { clearTimeout(incomingTimeoutRef.current) } catch{} finally { incomingTimeoutRef.current = null } }
 
   // --- Hovory (audio/video) ---
   const [callState, setCallState] = useState({
@@ -492,6 +499,31 @@ export default function App() {
   // Jednoduchý vyzváněcí tón (foreground only)
   function startRing(){
     try {
+      // Upřednostni audio soubor, pokud existuje a není ztlumený
+      if (!ringMuted) {
+        if (!ringAudioRef.current) {
+          const a = new Audio('/assets/ringtone.mp3')
+          a.loop = true
+          a.preload = 'auto'
+          ringAudioRef.current = a
+        }
+        const a = ringAudioRef.current
+        // Pokus o přehrání; při blokaci autoplay spadne na oscilátor
+        a.currentTime = 0
+        a.play().then(() => {
+          // Když hraje soubor, neplánuj oscilátor
+        }).catch(() => {
+          // Fallback na oscilátor
+          startOscillatorRing()
+        })
+      } else {
+        // Ztlumeno -> fallback jemný oscilátor, ale velmi potichu nebo vůbec
+        startOscillatorRing(0.06)
+      }
+    } catch {}
+  }
+  function startOscillatorRing(gainLevel = 0.12){
+    try {
       const ctx = audioCtxRef.current
       if (!ctx) return
       stopRing()
@@ -506,8 +538,8 @@ export default function App() {
         const t = ctx.currentTime
         g.gain.cancelScheduledValues(t)
         g.gain.setValueAtTime(0.0001, t)
-        g.gain.exponentialRampToValueAtTime(0.12, t + 0.05)
-        g.gain.setValueAtTime(0.12, t + 0.75)
+        g.gain.exponentialRampToValueAtTime(gainLevel, t + 0.05)
+        g.gain.setValueAtTime(gainLevel, t + 0.75)
         g.gain.exponentialRampToValueAtTime(0.0001, t + 0.85)
       }
       tick()
@@ -518,6 +550,7 @@ export default function App() {
     try { if (ringTimerRef.current) { clearInterval(ringTimerRef.current); ringTimerRef.current = null } } catch{}
     try { if (ringGainRef.current) { const ctx = audioCtxRef.current; const t = ctx?.currentTime || 0; ringGainRef.current.gain.setValueAtTime(0.0001, t) } } catch{}
     try { ringOscRef.current?.stop(); ringOscRef.current?.disconnect(); ringGainRef.current?.disconnect() } catch{}
+    try { if (ringAudioRef.current) { ringAudioRef.current.pause(); ringAudioRef.current.currentTime = 0 } } catch{}
     ringOscRef.current = null; ringGainRef.current = null
   }
 
@@ -532,6 +565,45 @@ export default function App() {
       }
     }
   }, [])
+
+  // Když appka startuje po kliknutí na notifikaci, přečteme query parametry
+  useEffect(() => {
+    try{
+      const url = new URL(window.location.href)
+      if (url.searchParams.get('notify') === '1'){
+        const ntype = url.searchParams.get('ntype') || ''
+        const from = url.searchParams.get('from') || ''
+        const fromName = url.searchParams.get('fromName') || ''
+        const kind = url.searchParams.get('kind') || 'audio'
+        const tsStr = url.searchParams.get('ts') || ''
+        const ts = tsStr ? parseInt(tsStr, 10) : 0
+        // Stará notifikace (starší než 60s) se ignoruje
+        if (ts && (Date.now() - ts > 60000)) return
+        if (ntype === 'call' && (from || fromName)){
+          // Necháme users načíst a potom nastavíme výběr a overlay
+          const apply = () => {
+            if (!users || !users.length) { setTimeout(apply, 300); return }
+            const byId = from ? users.find(u => u.id === from) : null
+            const person = byId || users.find(u => (u.name||'').toLowerCase() === fromName.toLowerCase())
+            if (person) setSelectedUser(person)
+            peerIdRef.current = from || (person && person.id) || null
+            setCallState(cs => ({ ...cs, incoming: true, outgoing: false, active: false, connecting: false, kind, from: from || null, to: (user&&user.id)||null, remoteName: fromName || (person && person.name) || '' }))
+            if (audioReady) startRing()
+            // Timeout pro nezvednutý příchozí hovor (45s)
+            clearIncomingTimeout()
+            incomingTimeoutRef.current = setTimeout(() => {
+              if (!callState.active) {
+                declineCall()
+              }
+            }, 45000)
+          }
+          apply()
+          // Vyčistíme parametry z URL (nebo to necháme být)
+          try { url.searchParams.delete('notify'); window.history.replaceState({}, '', url.pathname + url.search) } catch(_){}
+        }
+      }
+    }catch(_){ }
+  }, [users, audioReady, user])
 
   // Reakce na kliknutí notifikace ze SW (sw:notifyClick)
   useEffect(() => {
@@ -549,6 +621,13 @@ export default function App() {
         peerIdRef.current = d.from
         setCallState(cs => ({ ...cs, incoming: true, outgoing: false, active: false, connecting: false, kind: d.kind || 'audio', from: d.from, to: (user&&user.id)||null, remoteName: d.fromName || '' }))
         if (audioReady) startRing()
+        // Timeout pro nezvednutý příchozí hovor (45s)
+        clearIncomingTimeout()
+        incomingTimeoutRef.current = setTimeout(() => {
+          if (!callState.active) {
+            declineCall()
+          }
+        }, 45000)
       }
     }
     window.addEventListener('message', onMsg)
@@ -575,6 +654,8 @@ export default function App() {
 
       const onIncoming = (info) => {
         if (!info || info.to !== user.id) return
+        // Zahodit staré příchozí hovory starší než 60s
+        if (info.ts && (Date.now() - info.ts > 60000)) return
         peerIdRef.current = info.from
         setCallState(cs => ({
           ...cs,
@@ -588,6 +669,13 @@ export default function App() {
           remoteName: info.fromName || ''
         }))
         if (audioReady) startRing()
+        // Timeout pro nezvednutý příchozí hovor (45s)
+        clearIncomingTimeout()
+        incomingTimeoutRef.current = setTimeout(() => {
+          if (!callState.active) {
+            declineCall()
+          }
+        }, 45000)
       }
       const onOffer = async (data) => {
         if (!data || data.to !== user.id) return
@@ -612,6 +700,7 @@ export default function App() {
         if (!data || data.to !== user.id) return
         try { await pcRef.current?.setRemoteDescription(data.sdp) } catch(_){}
         stopRing()
+        clearIncomingTimeout()
         setCallState(cs => ({ ...cs, connecting: false, active: true }))
       }
       const onIce = async (data) => {
@@ -639,6 +728,7 @@ export default function App() {
       const onDecline = (data) => {
         if (!data || data.to !== user.id) return
         stopRing()
+        clearIncomingTimeout()
         endCall()
       }
 
@@ -647,6 +737,7 @@ export default function App() {
         const peer = peerIdRef.current
         if (data.from && peer && data.from !== peer) return
         stopRing()
+        clearIncomingTimeout()
         endCall()
       }
 
@@ -718,6 +809,16 @@ export default function App() {
     // Oznám příchozí hovor druhé straně (ring); offer se pošle až po explicitním accept
     try { await fetch(`${apiBaseRef.current}/call`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: user.id, to: selectedUser.id, kind, fromName: user.name }) }) } catch(_){}
     try { await ensureLocalMedia(kind) } catch(_){}
+
+    // Nastav timeout na nezdvihnutý odchozí hovor (bez odpovědi)
+    clearTimeout(incomingTimeoutRef.current)
+    incomingTimeoutRef.current = setTimeout(() => {
+      // Pokud se hovor během 45s nerozeběhne, ukonči zvonění a zobraz info
+      if (!callState.active) {
+        stopRing()
+        endCall()
+      }
+    }, 45000)
   }
 
   async function endCall(){
@@ -760,6 +861,11 @@ export default function App() {
     stopRing()
     endCall()
   }
+
+  // Vyčistit timeouty při unmountu
+  useEffect(() => {
+    return () => { try { clearTimeout(incomingTimeoutRef.current) } catch{} }
+  }, [])
 
   // Načítání seznamu ostatních uživatelů + unread listeners
   useEffect(() => {
@@ -922,6 +1028,15 @@ export default function App() {
                   <div>{callState.remoteName || 'Volání'}</div>
                   {callState.connecting && <div style={{fontSize:12,opacity:.8,marginTop:6}}>Připojuji…</div>}
                 </div>
+              </div>
+            )}
+            {/* Ovládání vyzvánění */}
+            {(callState.incoming || callState.outgoing) && (
+              <div style={{display:'flex',justifyContent:'center',alignItems:'center',gap:12}}>
+                <label style={{display:'flex',alignItems:'center',gap:8,fontSize:13,opacity:.9}}>
+                  <input type="checkbox" checked={ringMuted} onChange={(e)=>{ setRingMuted(e.target.checked); try { localStorage.setItem('rodina:ringMuted', e.target.checked ? '1' : '0') } catch{} }} />
+                  Ztlumit vyzvánění
+                </label>
               </div>
             )}
             {callState.incoming && (

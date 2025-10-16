@@ -264,6 +264,19 @@ app.post('/api/presence', (req, res)=>{
 // ICE config fetcher (Xirsys)
 app.get('/api/ice', async (req, res) => {
   try {
+    // 1) Prefer explicit static TURN credentials if provided via env (no external API call)
+    const staticUrlsRaw = (process.env.TURN_URLS || process.env.XIRSYS_TURN_URLS || '').toString()
+    const staticUrls = staticUrlsRaw.split(',').map(s => s.trim()).filter(Boolean)
+    const staticUser = process.env.TURN_USERNAME || process.env.XIRSYS_TURN_USERNAME || process.env.XIRSYS_TURN_STATIC_USERNAME
+    const staticCred = process.env.TURN_CREDENTIAL || process.env.XIRSYS_TURN_CREDENTIAL || process.env.XIRSYS_TURN_STATIC_CREDENTIAL
+    if (staticUrls.length && staticUser && staticCred) {
+      return res.json({ iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: staticUrls, username: staticUser, credential: staticCred }
+      ] })
+    }
+
+    // 2) Otherwise, use Xirsys API (Bearer or Basic) to fetch ephemeral credentials
     const channel = (req.query.channel || process.env.XIRSYS_CHANNEL || 'default').toString();
     const region = (process.env.XIRSYS_REGION || 'global').toString();
     const username = process.env.XIRSYS_USERNAME || '';
@@ -335,7 +348,7 @@ app.post('/api/rt/hangup', (req, res)=>{ const payload = req.body || {}; broadca
 app.post('/api/rt/typing', (req, res)=>{ const payload = req.body || {}; broadcast('typing', payload); res.json({ ok: true }) })
 app.post('/api/rt/delivered', (req, res)=>{ const payload = req.body || {}; broadcast('delivered', payload); res.json({ ok: true }) })
 app.post('/api/call', async (req, res)=>{
-  const info = req.body || {};
+  const info = { ...(req.body || {}), ts: Date.now() };
   broadcast('incoming_call', info);
   // Push oznámení o příchozím hovoru
   readDB();
@@ -349,7 +362,7 @@ app.post('/api/call', async (req, res)=>{
     try{
       await webpush.sendNotification(
         sub,
-        JSON.stringify({ type: 'call', title: 'Rodina', body: `Příchozí ${kind}${who}` , fromName: info.fromName || '', from: info.from || null, kind: info.kind || 'audio', ts: Date.now() }),
+        JSON.stringify({ type: 'call', title: 'Rodina', body: `Příchozí ${kind}${who}` , fromName: info.fromName || '', from: info.from || null, kind: info.kind || 'audio', ts: info.ts || Date.now() }),
         { TTL: 45, headers: { Urgency: 'high' } }
       )
     }catch(e){}
