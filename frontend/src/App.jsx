@@ -533,6 +533,8 @@ export default function App() {
       }
       const onOffer = async (data) => {
         if (!data || data.to !== user.id) return
+        // Ignoruj offer, pokud příjemce zatím nepřijal
+        if (!callState.incoming && !callState.active) return
         peerIdRef.current = data.from
         await ensureLocalMedia(data.kind || 'audio')
         await ensurePeerConnection(data.kind || 'audio')
@@ -560,13 +562,42 @@ export default function App() {
         try { await pcRef.current?.addIceCandidate(data.candidate) } catch(_){}
       }
 
+      const onAccept = async (data) => {
+        if (!data || data.to !== user.id) return
+        // Callee přijal — volající teď může poslat offer
+        try {
+          await ensurePeerConnection(callState.kind)
+          const offer = await pcRef.current.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: callState.kind==='video' })
+          await pcRef.current.setLocalDescription(offer)
+          await fetch(`${apiBaseRef.current}/rt/offer`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ from: user.id, to: peerIdRef.current, sdp: pcRef.current.localDescription, kind: callState.kind })
+          })
+        } catch (_) {}
+      }
+
+      const onDecline = (data) => {
+        if (!data || data.to !== user.id) return
+        endCall()
+      }
+
+      const onHangup = (data) => {
+        if (!data) return
+        const peer = peerIdRef.current
+        if (data.from && peer && data.from !== peer) return
+        endCall()
+      }
+
       ch.bind('incoming_call', onIncoming)
-      ch.bind('webrtc_offer', onOffer)
+  ch.bind('webrtc_offer', onOffer)
       ch.bind('webrtc_answer', onAnswer)
       ch.bind('webrtc_ice', onIce)
+  ch.bind('webrtc_accept', onAccept)
+  ch.bind('webrtc_decline', onDecline)
+  ch.bind('webrtc_hangup', onHangup)
 
       return () => {
-        try { ch.unbind('incoming_call', onIncoming); ch.unbind('webrtc_offer', onOffer); ch.unbind('webrtc_answer', onAnswer); ch.unbind('webrtc_ice', onIce); p.unsubscribe('famcall'); p.disconnect() } catch(_){}
+        try { ch.unbind('incoming_call', onIncoming); ch.unbind('webrtc_offer', onOffer); ch.unbind('webrtc_answer', onAnswer); ch.unbind('webrtc_ice', onIce); ch.unbind('webrtc_accept', onAccept); ch.unbind('webrtc_decline', onDecline); ch.unbind('webrtc_hangup', onHangup); p.unsubscribe('famcall'); p.disconnect() } catch(_){}
       }
     } catch (_) {}
   }, [user])
@@ -622,24 +653,16 @@ export default function App() {
     if (!selectedUser) return
     peerIdRef.current = selectedUser.id
     setCallState({ active: false, incoming: false, outgoing: true, kind, from: user.id, to: selectedUser.id, connecting: true, remoteName: selectedUser.name })
-    // Oznám příchozí hovor druhé straně (ring)
+    // Oznám příchozí hovor druhé straně (ring); offer se pošle až po explicitním accept
     try { await fetch(`${apiBaseRef.current}/call`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: user.id, to: selectedUser.id, kind, fromName: user.name }) }) } catch(_){}
-    // Vytvoř nabídku
-    try {
-      await ensurePeerConnection(kind)
-      const offer = await pcRef.current.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: kind==='video' })
-      await pcRef.current.setLocalDescription(offer)
-      await fetch(`${apiBaseRef.current}/rt/offer`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from: user.id, to: selectedUser.id, sdp: pcRef.current.localDescription, kind })
-      })
-    } catch (e) {
-      alert('Hovor se nepodařilo zahájit: ' + (e.message || e.name))
-      endCall()
-    }
+    try { await ensureLocalMedia(kind) } catch(_){}
   }
 
-  function endCall(){
+  async function endCall(){
+    // pošli hangup peerovi
+    if (peerIdRef.current) {
+      try { await fetch(`${apiBaseRef.current}/rt/hangup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: user.id, to: peerIdRef.current }) }) } catch(_){}
+    }
     try { pcRef.current?.getSenders?.().forEach(s => { try { s.track && s.track.stop() } catch(_){} }) } catch(_){ }
     try { localStreamRef.current?.getTracks?.().forEach(t => t.stop()) } catch(_){ }
     try { pcRef.current?.close() } catch(_){ }
@@ -653,12 +676,23 @@ export default function App() {
   }
 
   async function acceptCall(){
-    // V reálu čekáme na offer handler, který pošle answer
     setCallState(cs => ({ ...cs, incoming: false, connecting: true }))
-    try { await ensureLocalMedia(callState.kind); await ensurePeerConnection(callState.kind) } catch(_){}
+    try {
+      await ensureLocalMedia(callState.kind)
+      await ensurePeerConnection(callState.kind)
+      // signalizuj protistraně, že může poslat offer
+      if (peerIdRef.current) {
+        await fetch(`${apiBaseRef.current}/rt/accept`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ from: user.id, to: peerIdRef.current }) })
+      }
+    } catch(_){}
   }
 
   function declineCall(){
+    // pošli decline a ukonči
+    const peer = peerIdRef.current
+    if (peer) {
+      fetch(`${apiBaseRef.current}/rt/decline`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ from: user.id, to: peer }) }).catch(()=>{})
+    }
     endCall()
   }
 

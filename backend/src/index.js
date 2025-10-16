@@ -322,6 +322,9 @@ app.get('/api/ice', async (req, res) => {
 app.post('/api/rt/offer', (req, res)=>{ const payload = req.body || {}; broadcast('webrtc_offer', payload); res.json({ ok: true }) })
 app.post('/api/rt/answer', (req, res)=>{ const payload = req.body || {}; broadcast('webrtc_answer', payload); res.json({ ok: true }) })
 app.post('/api/rt/ice', (req, res)=>{ const payload = req.body || {}; broadcast('webrtc_ice', payload); res.json({ ok: true }) })
+app.post('/api/rt/accept', (req, res)=>{ const payload = req.body || {}; broadcast('webrtc_accept', payload); res.json({ ok: true }) })
+app.post('/api/rt/decline', (req, res)=>{ const payload = req.body || {}; broadcast('webrtc_decline', payload); res.json({ ok: true }) })
+app.post('/api/rt/hangup', (req, res)=>{ const payload = req.body || {}; broadcast('webrtc_hangup', payload); res.json({ ok: true }) })
 app.post('/api/rt/typing', (req, res)=>{ const payload = req.body || {}; broadcast('typing', payload); res.json({ ok: true }) })
 app.post('/api/rt/delivered', (req, res)=>{ const payload = req.body || {}; broadcast('delivered', payload); res.json({ ok: true }) })
 app.post('/api/call', async (req, res)=>{
@@ -452,6 +455,15 @@ io.on('connection', (socket) => {
   })
   socket.on('webrtc_ice', (data)=>{
     socket.broadcast.emit('webrtc_ice', data); broadcast('webrtc_ice', data)
+  })
+  socket.on('webrtc_accept', (data)=>{
+    socket.broadcast.emit('webrtc_accept', data); broadcast('webrtc_accept', data)
+  })
+  socket.on('webrtc_decline', (data)=>{
+    socket.broadcast.emit('webrtc_decline', data); broadcast('webrtc_decline', data)
+  })
+  socket.on('webrtc_hangup', (data)=>{
+    socket.broadcast.emit('webrtc_hangup', data); broadcast('webrtc_hangup', data)
   })
 });
 
