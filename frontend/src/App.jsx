@@ -453,6 +453,8 @@ export default function App() {
   const channelRef = useRef(null)
   const peerIdRef = useRef(null)
   const apiBaseRef = useRef(null)
+  // Diagnostika
+  const [diag, setDiag] = useState({ pusher: 'off', sw: 'off', pushPerm: 'default', pushSub: false, iceCount: 0, apiBase: '' })
 
   // Po prvním gestu uživatele odemkni AudioContext a případně požádej o notifikační oprávnění
   useEffect(() => {
@@ -638,6 +640,25 @@ export default function App() {
   useEffect(() => {
     const base = import.meta.env.PROD ? '/api' : ((import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '') + '/api')
     apiBaseRef.current = base
+    setDiag(d => ({ ...d, apiBase: base }))
+    // Zjisti SW/Push stav
+    ;(async () => {
+      try {
+        const swReg = await (navigator.serviceWorker?.ready)
+        const sw = Boolean(swReg)
+        const perm = typeof Notification !== 'undefined' ? Notification.permission : 'unsupported'
+        let sub = false
+        if (swReg) {
+          try { sub = Boolean(await swReg.pushManager.getSubscription()) } catch {}
+        }
+        setDiag(d => ({ ...d, sw: sw ? 'on' : 'off', pushPerm: perm, pushSub: sub }))
+      } catch(_) {}
+      try {
+        const ice = await fetch(base + '/ice').then(r=>r.json()).catch(()=>({ iceServers: [] }))
+        const count = Array.isArray(ice.iceServers) ? ice.iceServers.length : 0
+        setDiag(d => ({ ...d, iceCount: count }))
+      } catch(_) {}
+    })()
   }, [])
 
   // Inicializace Pusher po přihlášení
@@ -651,6 +672,13 @@ export default function App() {
       const ch = p.subscribe('famcall')
       pusherRef.current = p
       channelRef.current = ch
+
+      // Diagnostika Pusheru
+      try {
+        p.connection.bind('state_change', (states) => {
+          setDiag(d => ({ ...d, pusher: states.current }))
+        })
+      } catch(_) {}
 
       const onIncoming = (info) => {
         if (!info || info.to !== user.id) return
@@ -966,6 +994,14 @@ export default function App() {
 
   return (
     <div className={"app" + (selectedUser ? " chat-open" : " no-chat") + (theme && theme!=='default' ? ` theme-${theme}` : '')}>
+      {/* Diagnostický proužek */}
+      <div style={{position:'fixed',left:10,bottom:10,zIndex:4000,background:'rgba(0,0,0,0.5)',color:'#cbd5e1',padding:'6px 10px',borderRadius:8,fontSize:11,border:'1px solid #374151'}}>
+        <span>Pusher: {diag.pusher}</span>
+        <span style={{margin:'0 8px'}}>SW: {diag.sw}</span>
+        <span>Push: {diag.pushPerm}/{diag.pushSub?'sub':'no-sub'}</span>
+        <span style={{margin:'0 8px'}}>ICE: {diag.iceCount}</span>
+        <span>API: {diag.apiBase}</span>
+      </div>
       {isSettingsOpen && <SettingsModal user={user} theme={theme} onThemeChange={handleThemeChange} onAuth={handleAuth} onClose={() => setIsSettingsOpen(false)} />}
       <aside className="sidebar">
         <div className="sidebar-header">
