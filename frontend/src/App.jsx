@@ -969,7 +969,7 @@ export default function App() {
     // Po přihlášení znovu zaregistruj push se svým userId
     try {
       if ('serviceWorker' in navigator) {
-        const apiBase = import.meta.env.PROD ? '/.netlify/functions/proxy' : (import.meta.env.VITE_API_URL || 'http://localhost:3001')
+        const apiBase = import.meta.env.PROD ? '/api' : ((import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '') + '/api')
         navigator.serviceWorker.ready.then(reg => initPush(reg, apiBase, authedUser.id)).catch(()=>{})
       }
     } catch (_) {}
@@ -995,12 +995,22 @@ export default function App() {
   return (
     <div className={"app" + (selectedUser ? " chat-open" : " no-chat") + (theme && theme!=='default' ? ` theme-${theme}` : '')}>
       {/* Diagnostický proužek */}
-      <div style={{position:'fixed',left:10,bottom:10,zIndex:4000,background:'rgba(0,0,0,0.5)',color:'#cbd5e1',padding:'6px 10px',borderRadius:8,fontSize:11,border:'1px solid #374151'}}>
+      <div style={{position:'fixed',left:10,bottom:10,zIndex:4000,background:'rgba(0,0,0,0.5)',color:'#cbd5e1',padding:'6px 10px',borderRadius:8,fontSize:11,border:'1px solid #374151',display:'flex',gap:8,alignItems:'center'}}>
         <span>Pusher: {diag.pusher}</span>
-        <span style={{margin:'0 8px'}}>SW: {diag.sw}</span>
+        <span>SW: {diag.sw}</span>
         <span>Push: {diag.pushPerm}/{diag.pushSub?'sub':'no-sub'}</span>
-        <span style={{margin:'0 8px'}}>ICE: {diag.iceCount}</span>
+        <span>ICE: {diag.iceCount}</span>
         <span>API: {diag.apiBase}</span>
+        <button onClick={async()=>{
+          try{
+            const reg = await navigator.serviceWorker?.ready
+            const base = apiBaseRef.current
+            const u = JSON.parse(localStorage.getItem('rodina:user') || 'null')
+            await initPush(reg, base, u?.id || null)
+            const sub = await reg?.pushManager?.getSubscription()
+            setDiag(d => ({ ...d, pushSub: Boolean(sub), pushPerm: (typeof Notification!=='undefined'?Notification.permission:'unsupported') }))
+          }catch(_){ }
+        }} style={{marginLeft:8,background:'#1f2937',border:'1px solid #374151',color:'#cbd5e1',borderRadius:6,padding:'3px 8px',cursor:'pointer'}}>Re-sub</button>
       </div>
       {isSettingsOpen && <SettingsModal user={user} theme={theme} onThemeChange={handleThemeChange} onAuth={handleAuth} onClose={() => setIsSettingsOpen(false)} />}
       <aside className="sidebar">
