@@ -415,6 +415,7 @@ function ChatWindow({ user, selectedUser }) {
 export default function App() {
   const [user, setUser] = useState(null)
   const [users, setUsers] = useState([])
+  const usersRef = useRef([])
   const [selectedUser, setSelectedUser] = useState(null)
   const selectedUserRef = useRef(null)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
@@ -687,6 +688,14 @@ export default function App() {
         // Zahodit staré příchozí hovory starší než 60s
         if (info.ts && (Date.now() - info.ts > 60000)) return
         peerIdRef.current = info.from
+        // Auto-select volajícího kontaktu (pokud existuje v seznamu)
+        try {
+          const list = usersRef.current || []
+          const byId = list.find(u => u.id === info.from)
+          const byName = !byId && info.fromName ? list.find(u => (u.name||'').toLowerCase() === (info.fromName||'').toLowerCase()) : null
+          const who = byId || byName
+          if (who) setSelectedUser(who)
+        } catch(_){}
         setCallState(cs => ({
           ...cs,
           incoming: true,
@@ -709,8 +718,7 @@ export default function App() {
       }
       const onOffer = async (data) => {
         if (!data || data.to !== user.id) return
-        // Povolit i při connecting (po kliknutí na Přijmout)
-        if (!callState.incoming && !callState.active && !callState.connecting) return
+        // Zpracuj offer bez závislosti na starém callState v closure
         peerIdRef.current = data.from
         await ensureLocalMedia(data.kind || 'audio')
         await ensurePeerConnection(data.kind || 'audio')
@@ -879,6 +887,7 @@ export default function App() {
         await fetch(`${apiBaseRef.current}/rt/accept`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ from: user.id, to: peerIdRef.current }) })
       }
       stopRing()
+      clearIncomingTimeout()
     } catch(_){}
   }
 
@@ -963,6 +972,7 @@ export default function App() {
 
   // Udržuj referenci na aktuálně vybraného uživatele pro notifikační callbacky
   useEffect(() => { selectedUserRef.current = selectedUser }, [selectedUser])
+  useEffect(() => { usersRef.current = users }, [users])
 
 
   const handleAuth = (authedUser) => {
