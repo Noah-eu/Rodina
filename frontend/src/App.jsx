@@ -426,6 +426,7 @@ export default function App() {
   const ringTimerRef = useRef(null)
   const ringGainRef = useRef(null)
   const ringOscRef = useRef(null)
+  const ringVibeTimerRef = useRef(null)
   // Souborový ringtone a nastavení ztlumení
   const ringAudioRef = useRef(null)
   const [ringMuted, setRingMuted] = useState(() => {
@@ -531,7 +532,14 @@ export default function App() {
   // Jednoduchý vyzváněcí tón (foreground only)
   function startRing(){
     try {
-      try { navigator.vibrate && navigator.vibrate([180,120,180,120,180]) } catch{}
+      // nepřetržitá vibrace (pattern opakujeme v intervalu)
+      try {
+        if (navigator.vibrate) {
+          navigator.vibrate([250, 200, 250])
+          if (ringVibeTimerRef.current) clearInterval(ringVibeTimerRef.current)
+          ringVibeTimerRef.current = setInterval(() => { try { navigator.vibrate([250,200,250]) } catch {} }, 2000)
+        }
+      } catch {}
       // Zkusit probudit AudioContext (pokud to prohlížeč dovolí)
       try { if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') audioCtxRef.current.resume().catch(()=>{}) } catch{}
       // Upřednostni audio soubor, pokud existuje a není ztlumený
@@ -586,7 +594,29 @@ export default function App() {
     try { if (ringGainRef.current) { const ctx = audioCtxRef.current; const t = ctx?.currentTime || 0; ringGainRef.current.gain.setValueAtTime(0.0001, t) } } catch{}
     try { ringOscRef.current?.stop(); ringOscRef.current?.disconnect(); ringGainRef.current?.disconnect() } catch{}
     try { if (ringAudioRef.current) { ringAudioRef.current.pause(); ringAudioRef.current.currentTime = 0 } } catch{}
+    try { if (ringVibeTimerRef.current) { clearInterval(ringVibeTimerRef.current); ringVibeTimerRef.current = null } } catch{}
+    try { navigator.vibrate && navigator.vibrate(0) } catch{}
     ringOscRef.current = null; ringGainRef.current = null
+  }
+
+  // Fallback: ukázat call notifikaci přes SW i bez push (když máme povolené notifikace)
+  async function showCallNotification({ from, fromName='', kind='audio', ts=Date.now() }){
+    try {
+      if (typeof Notification==='undefined' || Notification.permission!=='granted') return
+      const reg = await navigator.serviceWorker?.ready
+      if (!reg || !reg.showNotification) return
+      const data = { type:'call', from, fromName, kind, ts }
+      await reg.showNotification('Rodina', {
+        body: `Příchozí ${kind==='video'?'videohovor':'hovor'}${fromName?` od ${fromName}`:''}`,
+        tag: `call-${from||''}`,
+        requireInteraction: true,
+        renotify: true,
+        vibrate: [150, 100, 150, 100, 150],
+        icon: '/assets/default-avatar.png',
+        actions: [ { action:'accept', title:'Přijmout' }, { action:'decline', title:'Odmítnout' } ],
+        data
+      })
+    } catch {}
   }
 
   // Načtení uživatele z localStorage při startu
@@ -805,6 +835,8 @@ export default function App() {
           remoteName: info.fromName || ''
         }))
         if (audioReady) startRing()
+        // Zobraz fallback notifikaci přes SW (když push případně nedorazí)
+        showCallNotification({ from: info.from, fromName: info.fromName||'', kind: info.kind||'audio', ts: info.ts||Date.now() })
         // Timeout pro nezvednutý příchozí hovor (45s)
         clearIncomingTimeout()
         incomingTimeoutRef.current = setTimeout(() => {
