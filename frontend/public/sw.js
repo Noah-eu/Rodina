@@ -23,6 +23,11 @@ self.addEventListener('push', function(event) {
     renotify: data.type === 'call',
     requireInteraction: data.type === 'call',
     vibrate: data.type === 'call' ? [150, 100, 150, 100, 150] : undefined,
+    icon: '/assets/default-avatar.png',
+    actions: data.type === 'call' ? [
+      { action: 'accept', title: 'Přijmout' },
+      { action: 'decline', title: 'Odmítnout' }
+    ] : undefined,
     data
   }
   event.waitUntil(self.registration.showNotification(title, opts))
@@ -37,7 +42,14 @@ self.addEventListener('notificationclick', function(event){
     const win = all.find(c => 'focus' in c)
     if (win) {
       await win.focus()
-      try { win.postMessage({ type: 'sw:notifyClick', data: d }) } catch(_){}
+      // Akce notifikace: accept/decline
+      if (event.action === 'accept') {
+        try { win.postMessage({ type: 'sw:notifyAction', action: 'accept', data: d }) } catch(_){ }
+      } else if (event.action === 'decline') {
+        try { win.postMessage({ type: 'sw:notifyAction', action: 'decline', data: d }) } catch(_){ }
+      } else {
+        try { win.postMessage({ type: 'sw:notifyClick', data: d }) } catch(_){ }
+      }
     } else {
       const params = new URLSearchParams()
       params.set('notify', '1')

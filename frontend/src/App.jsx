@@ -493,12 +493,23 @@ export default function App() {
         if (document.visibilityState === 'visible' && audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
           await audioCtxRef.current.resume()
           setAudioReady(audioCtxRef.current.state === 'running')
+          // pokud probíhá příchozí/odchozí hovor a zatím nezvoní, zkus znovu spustit
+          if ((callState.incoming || callState.outgoing) && audioCtxRef.current.state === 'running') {
+            startRing()
+          }
         }
       } catch {}
     }
     document.addEventListener('visibilitychange', onVis)
     return () => document.removeEventListener('visibilitychange', onVis)
-  }, [])
+  }, [callState.incoming, callState.outgoing])
+
+  // Když se audio odemkne během příchozího/odchozího hovoru, spustit zvonění
+  useEffect(() => {
+    if (audioReady && (callState.incoming || callState.outgoing)) {
+      startRing()
+    }
+  }, [audioReady, callState.incoming, callState.outgoing])
 
   const playBeep = () => {
     try {
@@ -656,6 +667,34 @@ export default function App() {
     window.addEventListener('message', onMsg)
     return () => window.removeEventListener('message', onMsg)
   }, [users, audioReady, user])
+
+  // Reakce na akce z notifikace (accept/decline)
+  useEffect(() => {
+    function onAction(ev){
+      if (!ev || !ev.data || ev.data.type !== 'sw:notifyAction') return
+      const { action, data } = ev.data
+      if (!data || data.type !== 'call') return
+      // Předvyber peer a otevři overlay stejně jako při kliknutí
+      const apply = async () => {
+        const list = usersRef.current || []
+        const who = list.find(u => u.id === data.from) || list.find(u => (u.name||'').toLowerCase() === (data.fromName||'').toLowerCase())
+        if (who) setSelectedUser(who)
+        peerIdRef.current = data.from
+        callKindRef.current = data.kind || 'audio'
+        setCallState(cs => ({ ...cs, incoming: true, outgoing: false, active: false, connecting: false, kind: data.kind || 'audio', from: data.from, to: (user&&user.id)||null, remoteName: data.fromName || '' }))
+        if (audioReady) startRing()
+        if (action === 'accept') {
+          // rovnou přijmi (po krátké prodlevě kvůli UI)
+          setTimeout(() => { acceptCall() }, 50)
+        } else if (action === 'decline') {
+          setTimeout(() => { declineCall() }, 50)
+        }
+      }
+      apply()
+    }
+    window.addEventListener('message', onAction)
+    return () => window.removeEventListener('message', onAction)
+  }, [audioReady, user])
 
   // API base pro hovory a ICE
   useEffect(() => {
@@ -863,24 +902,18 @@ export default function App() {
     const local = await ensureLocalMedia(kind)
     const aTrack = local.getAudioTracks()[0] || null
     const vTrack = (kind === 'video') ? (local.getVideoTracks()[0] || null) : null
-    // Zajisti transceivery v režimu sendrecv, pak připoj lokální tracky přes replaceTrack
-    const ensureTransceiver = (k) => {
-      let t = pc.getTransceivers().find(x => (x.receiver && x.receiver.track && x.receiver.track.kind === k) || x.kind === k)
-      if (!t) t = pc.addTransceiver(k, { direction: 'sendrecv' })
-      return t
+    const senders = pc.getSenders ? pc.getSenders() : []
+    const upsertTrack = (track) => {
+      if (!track) return
+      const sameKind = senders.find(s => s.track && s.track.kind === track.kind) || senders.find(s => s.kind === track.kind)
+      if (sameKind && sameKind.replaceTrack) {
+        try { sameKind.replaceTrack(track) } catch(_){ }
+      } else {
+        try { pc.addTrack(track, local) } catch(_){ }
+      }
     }
-    if (aTrack) {
-      const t = ensureTransceiver('audio')
-      try { await t.sender.replaceTrack(aTrack) } catch { try { pc.addTrack(aTrack, local) } catch {} }
-    } else {
-      ensureTransceiver('audio')
-    }
-    if (vTrack) {
-      const t = ensureTransceiver('video')
-      try { await t.sender.replaceTrack(vTrack) } catch { try { pc.addTrack(vTrack, local) } catch {} }
-    } else if (kind === 'video') {
-      ensureTransceiver('video')
-    }
+    upsertTrack(aTrack)
+    upsertTrack(vTrack)
     return pc
   }
 
@@ -896,8 +929,8 @@ export default function App() {
     // Nastav timeout na nezdvihnutý odchozí hovor (bez odpovědi)
     clearTimeout(incomingTimeoutRef.current)
     incomingTimeoutRef.current = setTimeout(() => {
-      // Pokud se hovor během 45s nerozeběhne, ukonči zvonění a zobraz info
-      if (!callState.active) {
+      // Pokud se hovor během 45s nerozeběhne, ukonči zvonění a hovor
+      if (!pcRef.current || !peerIdRef.current) {
         stopRing()
         endCall()
       }
@@ -1080,6 +1113,7 @@ export default function App() {
               if (!audioCtxRef.current) audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)()
               if (audioCtxRef.current.state === 'suspended') await audioCtxRef.current.resume()
               setAudioReady(true)
+              if (callState.incoming || callState.outgoing) startRing()
             } catch {}
           }} style={{background:'#1f2937',border:'1px solid #374151',color:'#cbd5e1',borderRadius:10,padding:'8px 12px',cursor:'pointer',boxShadow:'0 2px 8px rgba(0,0,0,.3)'}}>
             Zapnout vyzvánění
