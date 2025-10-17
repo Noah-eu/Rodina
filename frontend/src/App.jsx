@@ -486,6 +486,20 @@ export default function App() {
     }
   }, [])
 
+  // Pokusit se "tiše" obnovit AudioContext při návratu okna do popředí
+  useEffect(() => {
+    const onVis = async () => {
+      try {
+        if (document.visibilityState === 'visible' && audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+          await audioCtxRef.current.resume()
+          setAudioReady(audioCtxRef.current.state === 'running')
+        }
+      } catch {}
+    }
+    document.addEventListener('visibilitychange', onVis)
+    return () => document.removeEventListener('visibilitychange', onVis)
+  }, [])
+
   const playBeep = () => {
     try {
       const ctx = audioCtxRef.current
@@ -1015,6 +1029,20 @@ export default function App() {
 
   return (
     <div className={"app" + (selectedUser ? " chat-open" : " no-chat") + (theme && theme!=='default' ? ` theme-${theme}` : '')}>
+      {/* Globální odemknutí zvuku – pomůže, aby příchozí hovor mohl hned zvonit */}
+      {!audioReady && (
+        <div style={{position:'fixed',left:10,bottom:10,zIndex:3000}}>
+          <button onClick={async()=>{
+            try {
+              if (!audioCtxRef.current) audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)()
+              if (audioCtxRef.current.state === 'suspended') await audioCtxRef.current.resume()
+              setAudioReady(true)
+            } catch {}
+          }} style={{background:'#1f2937',border:'1px solid #374151',color:'#cbd5e1',borderRadius:10,padding:'8px 12px',cursor:'pointer',boxShadow:'0 2px 8px rgba(0,0,0,.3)'}}>
+            Zapnout vyzvánění
+          </button>
+        </div>
+      )}
       {isSettingsOpen && <SettingsModal user={user} theme={theme} onThemeChange={handleThemeChange} onAuth={handleAuth} onClose={() => setIsSettingsOpen(false)} />}
       <aside className="sidebar">
         <div className="sidebar-header">

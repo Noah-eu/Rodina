@@ -21,6 +21,7 @@ self.addEventListener('push', function(event) {
     body,
     tag: data.type === 'call' ? `call-${data.from || ''}` : undefined,
     renotify: data.type === 'call',
+    requireInteraction: data.type === 'call',
     vibrate: data.type === 'call' ? [150, 100, 150, 100, 150] : undefined,
     data
   }
