@@ -531,6 +531,7 @@ export default function App() {
   // Jednoduchý vyzváněcí tón (foreground only)
   function startRing(){
     try {
+      try { navigator.vibrate && navigator.vibrate([180,120,180,120,180]) } catch{}
       // Zkusit probudit AudioContext (pokud to prohlížeč dovolí)
       try { if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') audioCtxRef.current.resume().catch(()=>{}) } catch{}
       // Upřednostni audio soubor, pokud existuje a není ztlumený
@@ -1133,16 +1134,36 @@ export default function App() {
   }
 
   const [theme, setTheme] = useState(localStorage.getItem('rodina:theme') || 'default')
+  const [needNotify, setNeedNotify] = useState(false)
 
   const handleThemeChange = (next) => {
     setTheme(next)
     try { localStorage.setItem('rodina:theme', next) } catch (_) {}
   }
 
+  // Lehký průběžný check, zda máme povolené oznámení a subscription existuje
+  useEffect(() => {
+    let stop = false
+    const check = async () => {
+      try {
+        const perm = typeof Notification !== 'undefined' ? Notification.permission : 'denied'
+        let hasSub = false
+        const reg = await navigator.serviceWorker?.ready
+        if (reg) {
+          try { hasSub = Boolean(await reg.pushManager.getSubscription()) } catch {}
+        }
+        if (!stop) setNeedNotify(!(perm === 'granted' && hasSub))
+      } catch {}
+    }
+    check()
+    const t = setInterval(check, 15000)
+    return () => { stop = true; clearInterval(t) }
+  }, [])
+
   if (!user) return <Auth onAuth={handleAuth} />
 
   return (
-    <div className={"app" + (selectedUser ? " chat-open" : " no-chat") + (theme && theme!=='default' ? ` theme-${theme}` : '')}>
+  <div className={"app" + (selectedUser ? " chat-open" : " no-chat") + (theme && theme!=='default' ? ` theme-${theme}` : '')}>
       {/* Globální odemknutí zvuku – pomůže, aby příchozí hovor mohl hned zvonit */}
       {!audioReady && (
         <div style={{position:'fixed',left:10,bottom:10,zIndex:3000}}>
@@ -1162,7 +1183,27 @@ export default function App() {
       <aside className="sidebar">
         <div className="sidebar-header">
           <h2>Rodina</h2>
-          <button className="settings-btn" onClick={() => setIsSettingsOpen(true)}>⚙️</button>
+          <div style={{display:'flex',alignItems:'center',gap:8}}>
+            {needNotify && (
+              <button title="Povolit oznámení" onClick={async()=>{
+                try{
+                  if (typeof Notification!=='undefined' && Notification.permission==='default') await Notification.requestPermission()
+                  const reg = await navigator.serviceWorker?.ready
+                  if (reg) {
+                    const apiBase = import.meta.env.PROD ? '/api' : ((import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '') + '/api')
+                    const u = JSON.parse(localStorage.getItem('rodina:user')||'null')
+                    await initPush(reg, apiBase, u?.id || null)
+                  }
+                  // recheck
+                  const reg2 = await navigator.serviceWorker?.ready
+                  const perm2 = typeof Notification !== 'undefined' ? Notification.permission : 'denied'
+                  const sub2 = await reg2?.pushManager?.getSubscription()
+                  setNeedNotify(!(perm2==='granted' && Boolean(sub2)))
+                }catch(_){ }
+              }} style={{background:'#1f2937',border:'1px solid #374151',color:'#cbd5e1',borderRadius:8,padding:'6px 8px',cursor:'pointer'}}>🔔 Povolit</button>
+            )}
+            <button className="settings-btn" onClick={() => setIsSettingsOpen(true)}>⚙️</button>
+          </div>
         </div>
         <button onClick={handleLogout}>Odhlásit se</button>
         <ul>
