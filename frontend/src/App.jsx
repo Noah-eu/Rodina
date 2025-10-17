@@ -1015,9 +1015,40 @@ export default function App() {
   }
 
   // Pomocné: vytvoř/nahlaš PeerConnection
+  const pcCreatingRef = useRef(false)
   async function ensurePeerConnection(kind='audio'){
-    const existing = pcRef.current
-    if (!existing) {
+    if (pcRef.current) {
+      // Připojit lokální tracky k existujícím senderům (pokud ještě nejsou)
+      const local = await ensureLocalMedia(kind)
+      try {
+        const pc = pcRef.current
+        const aTrack = local.getAudioTracks()[0] || null
+        const vTrack = (kind === 'video') ? (local.getVideoTracks()[0] || null) : null
+        const trxs = pc.getTransceivers ? pc.getTransceivers() : []
+        const snds = pc.getSenders ? pc.getSenders() : []
+        const byKind = (list, k) => list.find(x => (x.kind||x.receiver?.track?.kind||x.track?.kind) === k)
+        const attach = async (k, track) => {
+          if (!track) return
+          let trx = byKind(trxs, k)
+          if (!trx && pc.addTransceiver) trx = pc.addTransceiver(k, { direction: 'sendrecv' })
+          let sender = byKind(snds, k) || trx?.sender
+          if (sender && sender.replaceTrack) {
+            try { await sender.replaceTrack(track) } catch(_){ }
+          } else {
+            try { pc.addTrack(track, local) } catch(_){ }
+          }
+        }
+        await attach('audio', aTrack)
+        await attach('video', vTrack)
+      } catch(_){}
+      return pcRef.current
+    }
+    if (pcCreatingRef.current) { // počkej krátce, než se dokončí předchozí create
+      while (pcCreatingRef.current && !pcRef.current) { await new Promise(r=>setTimeout(r,30)) }
+      return pcRef.current
+    }
+    pcCreatingRef.current = true
+    try {
       const iceResp = await fetch(`${apiBaseRef.current}/ice`).then(r=>r.json()).catch(()=>({ iceServers: [ { urls: 'stun:stun.l.google.com:19302' } ] }))
       const pc = new RTCPeerConnection({ iceServers: iceResp.iceServers || [ { urls: 'stun:stun.l.google.com:19302' } ] })
       pcRef.current = pc
@@ -1039,25 +1070,23 @@ export default function App() {
           } catch(_){ }
         }
       }
-    }
-
-    const pc = pcRef.current
-    const local = await ensureLocalMedia(kind)
-    const aTrack = local.getAudioTracks()[0] || null
-    const vTrack = (kind === 'video') ? (local.getVideoTracks()[0] || null) : null
-    const senders = pc.getSenders ? pc.getSenders() : []
-    const upsertTrack = (track) => {
-      if (!track) return
-      const sameKind = senders.find(s => s.track && s.track.kind === track.kind) || senders.find(s => s.kind === track.kind)
-      if (sameKind && sameKind.replaceTrack) {
-        try { sameKind.replaceTrack(track) } catch(_){ }
+      // Připoj lokální média
+      const local = await ensureLocalMedia(kind)
+      const aTrack = local.getAudioTracks()[0] || null
+      const vTrack = (kind === 'video') ? (local.getVideoTracks()[0] || null) : null
+      if (pc.addTransceiver) {
+        const ta = pc.addTransceiver('audio', { direction: 'sendrecv' })
+        if (aTrack) { try { await ta.sender.replaceTrack(aTrack) } catch { try { pc.addTrack(aTrack, local) } catch {} } }
+        const tv = pc.addTransceiver('video', { direction: 'sendrecv' })
+        if (vTrack) { try { await tv.sender.replaceTrack(vTrack) } catch { try { pc.addTrack(vTrack, local) } catch {} } }
       } else {
-        try { pc.addTrack(track, local) } catch(_){ }
+        if (aTrack) { try { pc.addTrack(aTrack, local) } catch{}_ }
+        if (vTrack) { try { pc.addTrack(vTrack, local) } catch{}_ }
       }
+      return pc
+    } finally {
+      pcCreatingRef.current = false
     }
-    upsertTrack(aTrack)
-    upsertTrack(vTrack)
-    return pc
   }
 
   async function startCall(kind='audio'){
