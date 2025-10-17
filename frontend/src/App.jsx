@@ -1172,6 +1172,7 @@ export default function App() {
 
   const [theme, setTheme] = useState(localStorage.getItem('rodina:theme') || 'default')
   const [needNotify, setNeedNotify] = useState(false)
+  const [installEvt, setInstallEvt] = useState(null)
 
   const handleThemeChange = (next) => {
     setTheme(next)
@@ -1195,6 +1196,13 @@ export default function App() {
     check()
     const t = setInterval(check, 15000)
     return () => { stop = true; clearInterval(t) }
+  }, [])
+
+  // PWA instalace na Android (lepší heads-up notifikace a auto-open chování)
+  useEffect(() => {
+    const handler = (e) => { e.preventDefault(); setInstallEvt(e) }
+    window.addEventListener('beforeinstallprompt', handler)
+    return () => window.removeEventListener('beforeinstallprompt', handler)
   }, [])
 
   if (!user) return <Auth onAuth={handleAuth} />
@@ -1238,6 +1246,9 @@ export default function App() {
                   setNeedNotify(!(perm2==='granted' && Boolean(sub2)))
                 }catch(_){ }
               }} style={{background:'#1f2937',border:'1px solid #374151',color:'#cbd5e1',borderRadius:8,padding:'6px 8px',cursor:'pointer'}}>🔔 Povolit</button>
+            )}
+            {installEvt && (
+              <button title="Instalovat" onClick={async()=>{ try{ await installEvt.prompt(); setInstallEvt(null) }catch(_){} }} style={{background:'#1f2937',border:'1px solid #374151',color:'#cbd5e1',borderRadius:8,padding:'6px 8px',cursor:'pointer'}}>⬇️ Instalovat</button>
             )}
             <button className="settings-btn" onClick={() => setIsSettingsOpen(true)}>⚙️</button>
           </div>

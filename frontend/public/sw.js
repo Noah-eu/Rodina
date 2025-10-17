@@ -20,11 +20,7 @@ self.addEventListener('push', function(event) {
   // Pro hovory připrav delší vibrační pattern (Android)
   let vibe = undefined
   if (data.type === 'call') {
-    try {
-      const seq = []
-      for (let i=0;i<20;i++) { seq.push(250, 180) } // ~8.6s vibrací
-      vibe = seq
-    } catch(_) { vibe = [150,100,150,100,150] }
+    vibe = [300, 200, 300]
   }
   const opts = {
     body,
@@ -40,7 +36,7 @@ self.addEventListener('push', function(event) {
     data
   }
   event.waitUntil((async () => {
-    await self.registration.showNotification(title, opts)
+    const n = await self.registration.showNotification(title, opts)
     // Experimentální: zkusit otevřít okno s appkou pro rychlé přijetí (některé prohlížeče blokují bez interakce)
     try {
       if (data.type === 'call') {
