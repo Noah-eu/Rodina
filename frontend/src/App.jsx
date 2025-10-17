@@ -154,6 +154,69 @@ function ChatWindow({ user, selectedUser }) {
   // Abychom opakovaně nevypisovali foreground notifikace při rebindu listenerů
   const lastNotifiedRef = useRef({}) // { peerUserId: lastMessageId }
 
+  // --- Ukládání příloh do zařízení ---
+  async function downloadToDevice(url, suggestedName='soubor'){
+    try {
+      // Pokud je k dispozici File System Access API (Chrome/Edge/Android), nabídni Uložit jako
+      if (window.showSaveFilePicker) {
+        const opts = { suggestedName, types: [{ description: 'Soubor', accept: { '*/*': ['.*'] } }] }
+        const handle = await window.showSaveFilePicker(opts)
+        const writable = await handle.createWritable()
+        const res = await fetch(url, { mode: 'cors' })
+        if (!res.ok) throw new Error('Stažení selhalo')
+        if (res.body && writable.write) {
+          // stream copy
+          if (writable.write instanceof Function && res.body.getReader) {
+            const reader = res.body.getReader()
+            while (true) {
+              const { value, done } = await reader.read()
+              if (done) break
+              await writable.write(value)
+            }
+          } else {
+            const blob = await res.blob(); await writable.write(blob)
+          }
+        }
+        await writable.close()
+        return
+      }
+    } catch(_) { /* fallback níže */ }
+    try {
+      // Firebase Storage: přidej download=filename, aby prohlížeč uložil přímo
+      let dlUrl = url
+      try {
+        const u = new URL(url, window.location.origin)
+        if (/firebasestorage\.googleapis\.com/.test(u.hostname)) {
+          u.searchParams.set('download', suggestedName)
+          dlUrl = u.toString()
+        }
+      } catch { dlUrl = url }
+      const a = document.createElement('a')
+      a.href = dlUrl
+      a.download = suggestedName
+      a.rel = 'noopener'
+      a.target = '_blank'
+      document.body.appendChild(a)
+      a.click()
+      setTimeout(()=>{ try{ document.body.removeChild(a) }catch{} }, 0)
+    } catch {
+      try {
+        // Poslední fallback: fetch→blob→ObjectURL
+        const res = await fetch(url)
+        const blob = await res.blob()
+        const obj = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = obj
+        a.download = suggestedName
+        document.body.appendChild(a)
+        a.click()
+        setTimeout(()=>{ URL.revokeObjectURL(obj); try{ document.body.removeChild(a) }catch{} }, 0)
+      } catch(e) {
+        alert('Uložení se nepodařilo: ' + (e.message || e))
+      }
+    }
+  }
+
   // Vytvoření unikátního ID místnosti pro dvojici uživatelů (nezávislé na pořadí)
   const roomId = [user.id, selectedUser.id].sort().join('_')
 
@@ -352,13 +415,13 @@ function ChatWindow({ user, selectedUser }) {
               {msg.imageUrl && (
                 <div className="msg-image" style={{marginBottom: msg.text ? '6px' : '0', position:'relative'}}>
                   <img src={msg.imageUrl} alt="obrázek" onClick={() => setLightboxUrl(msg.imageUrl)} />
-                  <a href={msg.imageUrl} download style={{position:'absolute',right:8,top:8,background:'rgba(0,0,0,0.5)',color:'#fff',padding:'6px 8px',borderRadius:8,textDecoration:'none',fontSize:12}} aria-label="Stáhnout obrázek">⬇️ Stáhnout</a>
+                  <button onClick={() => downloadToDevice(msg.imageUrl, `obrazek_${Date.now()}.jpg`)} style={{position:'absolute',right:8,top:8,background:'rgba(0,0,0,0.5)',color:'#fff',padding:'6px 8px',borderRadius:8,border:'none',cursor:'pointer',fontSize:12}} aria-label="Stáhnout obrázek">⬇️ Stáhnout</button>
                 </div>
               )}
               {msg.audioUrl && (
                 <div className="msg-audio" style={{marginBottom: (msg.text || msg.imageUrl) ? '6px' : '0', display:'flex',alignItems:'center',gap:10}}>
                   <VoiceMessage src={msg.audioUrl} own={msg.from === user.id} />
-                  <a href={msg.audioUrl} download style={{background:'#1f2937',border:'1px solid #374151',color:'#cbd5e1',borderRadius:8,padding:'6px 8px',textDecoration:'none',fontSize:12}} aria-label="Stáhnout zvuk">⬇️ Stáhnout</a>
+                  <button onClick={() => downloadToDevice(msg.audioUrl, `hlasovka_${Date.now()}.webm`)} style={{background:'#1f2937',border:'1px solid #374151',color:'#cbd5e1',borderRadius:8,padding:'6px 8px',cursor:'pointer',fontSize:12}} aria-label="Stáhnout zvuk">⬇️ Stáhnout</button>
                 </div>
               )}
               {msg.text && <div className="msg-text">{msg.text}</div>}
