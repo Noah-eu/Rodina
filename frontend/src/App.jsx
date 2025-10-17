@@ -151,6 +151,8 @@ function ChatWindow({ user, selectedUser }) {
   const firstBatchLoadedRef = useRef(false)
   const earliestDocRef = useRef(null)
   const loadingMoreRef = useRef(false)
+  // Abychom opakovaně nevypisovali foreground notifikace při rebindu listenerů
+  const lastNotifiedRef = useRef({}) // { peerUserId: lastMessageId }
 
   // Vytvoření unikátního ID místnosti pro dvojici uživatelů (nezávislé na pořadí)
   const roomId = [user.id, selectedUser.id].sort().join('_')
@@ -348,13 +350,15 @@ function ChatWindow({ user, selectedUser }) {
             <div>
               <div className="msg-name">{msg.name}</div>
               {msg.imageUrl && (
-                <div className="msg-image" style={{marginBottom: msg.text ? '6px' : '0'}}>
+                <div className="msg-image" style={{marginBottom: msg.text ? '6px' : '0', position:'relative'}}>
                   <img src={msg.imageUrl} alt="obrázek" onClick={() => setLightboxUrl(msg.imageUrl)} />
+                  <a href={msg.imageUrl} download style={{position:'absolute',right:8,top:8,background:'rgba(0,0,0,0.5)',color:'#fff',padding:'6px 8px',borderRadius:8,textDecoration:'none',fontSize:12}} aria-label="Stáhnout obrázek">⬇️ Stáhnout</a>
                 </div>
               )}
               {msg.audioUrl && (
-                <div className="msg-audio" style={{marginBottom: (msg.text || msg.imageUrl) ? '6px' : '0'}}>
+                <div className="msg-audio" style={{marginBottom: (msg.text || msg.imageUrl) ? '6px' : '0', display:'flex',alignItems:'center',gap:10}}>
                   <VoiceMessage src={msg.audioUrl} own={msg.from === user.id} />
+                  <a href={msg.audioUrl} download style={{background:'#1f2937',border:'1px solid #374151',color:'#cbd5e1',borderRadius:8,padding:'6px 8px',textDecoration:'none',fontSize:12}} aria-label="Stáhnout zvuk">⬇️ Stáhnout</a>
                 </div>
               )}
               {msg.text && <div className="msg-text">{msg.text}</div>}
@@ -1098,20 +1102,28 @@ export default function App() {
         // Notifikační listener na poslední zprávu (lehké – bere všechny zprávy; lze optimalizovat limit(1) desc)
         const msgsCol = collection(db, 'chats', roomId, 'messages')
         const unsubMsg = onSnapshot(query(msgsCol, orderBy('createdAt', 'desc'), limit(1)), snap => {
-          if (!snap.empty) {
-            const d = snap.docs[0].data()
-            const activeSel = selectedUserRef.current
-            if (d.from !== user.id && (!activeSel || activeSel.id !== u.id)) {
-              // Neaktivní room – pokus o notifikaci
-              if (Notification && Notification.permission === 'granted') {
-                try {
-                  new Notification(`${d.name}: ${d.text || '🖼 Obrázek'}`, { body: 'Nová zpráva', icon: d.avatar || '/assets/default-avatar.png' })
-                  // Zvuková a haptická odezva (pokud je odemčený audio kontext)
-                  if (audioReady) playBeep()
-                  try { navigator.vibrate && navigator.vibrate([40, 30, 40]) } catch {}
-                } catch(e) { /* ignore */ }
-              }
-            }
+          if (snap.empty) return
+          const doc0 = snap.docs[0]
+          const d = doc0.data()
+          const msgId = doc0.id
+          // Deduplikace: upozorni jen jednou na konkrétní poslední zprávu
+          const last = lastNotifiedRef.current[u.id]
+          if (last === msgId) return
+          // Upozorni jen když je to od protistrany a chat není aktivní
+          const activeSel = selectedUserRef.current
+          if (d.from === user.id) return
+          if (activeSel && activeSel.id === u.id) return
+          // Neposílej upozornění na staré zprávy (porovnej s lastRead)
+          const created = d.createdAt?.toMillis?.() || 0
+          // Pozor: lastRead chceme číst “aktuální”; jednoduše ignoruj >24h staré
+          if (created && Date.now() - created > 24*60*60*1000) { lastNotifiedRef.current[u.id] = msgId; return }
+          lastNotifiedRef.current[u.id] = msgId
+          if (Notification && Notification.permission === 'granted') {
+            try {
+              new Notification(`${d.name}: ${d.text || (d.imageUrl ? '🖼 Obrázek' : (d.audioUrl ? '🎙 Hlasová zpráva' : 'Nová zpráva'))}`, { body: 'Nová zpráva', icon: d.avatar || '/assets/default-avatar.png' })
+              if (audioReady) playBeep()
+              try { navigator.vibrate && navigator.vibrate([40, 30, 40]) } catch {}
+            } catch(e) { /* ignore */ }
           }
         })
         unsubList.push(unsubMsg)
@@ -1200,7 +1212,8 @@ export default function App() {
 
   // PWA instalace na Android (lepší heads-up notifikace a auto-open chování)
   useEffect(() => {
-    const handler = (e) => { e.preventDefault(); setInstallEvt(e) }
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone
+    const handler = (e) => { if (!isStandalone) { e.preventDefault(); setInstallEvt(e) } }
     window.addEventListener('beforeinstallprompt', handler)
     return () => window.removeEventListener('beforeinstallprompt', handler)
   }, [])
