@@ -458,6 +458,8 @@ export default function App() {
   const [diag, setDiag] = useState({ pusher: 'off', sw: 'off', pushPerm: 'default', pushSub: false, iceCount: 0, apiBase: '' })
   // Aktuální typ hovoru (audio/video) mimo React state, aby se předešlo stale closures
   const callKindRef = useRef('audio')
+  // Fronta pro události z SW, než se načte seznam uživatelů
+  const pendingCallRef = useRef(null)
 
   // Po prvním gestu uživatele odemkni AudioContext a případně požádej o notifikační oprávnění
   useEffect(() => {
@@ -643,7 +645,7 @@ export default function App() {
     function onMsg(ev){
       if (!ev || !ev.data || ev.data.type !== 'sw:notifyClick') return
       const d = ev.data.data || {}
-      if (!users || !users.length) return
+      if (!users || !users.length) { pendingCallRef.current = { type: 'click', data: d }; return }
       const byId = users.find(u => u.id === d.from)
       if (byId) setSelectedUser(byId)
       else if (d.fromName){
@@ -655,13 +657,8 @@ export default function App() {
         callKindRef.current = d.kind || 'audio'
         setCallState(cs => ({ ...cs, incoming: true, outgoing: false, active: false, connecting: false, kind: d.kind || 'audio', from: d.from, to: (user&&user.id)||null, remoteName: d.fromName || '' }))
         if (audioReady) startRing()
-        // Timeout pro nezvednutý příchozí hovor (45s)
         clearIncomingTimeout()
-        incomingTimeoutRef.current = setTimeout(() => {
-          if (!callState.active) {
-            declineCall()
-          }
-        }, 45000)
+        incomingTimeoutRef.current = setTimeout(() => { if (!callState.active) { declineCall() } }, 45000)
       }
     }
     window.addEventListener('message', onMsg)
@@ -674,27 +671,68 @@ export default function App() {
       if (!ev || !ev.data || ev.data.type !== 'sw:notifyAction') return
       const { action, data } = ev.data
       if (!data || data.type !== 'call') return
-      // Předvyber peer a otevři overlay stejně jako při kliknutí
-      const apply = async () => {
-        const list = usersRef.current || []
-        const who = list.find(u => u.id === data.from) || list.find(u => (u.name||'').toLowerCase() === (data.fromName||'').toLowerCase())
-        if (who) setSelectedUser(who)
-        peerIdRef.current = data.from
-        callKindRef.current = data.kind || 'audio'
-        setCallState(cs => ({ ...cs, incoming: true, outgoing: false, active: false, connecting: false, kind: data.kind || 'audio', from: data.from, to: (user&&user.id)||null, remoteName: data.fromName || '' }))
-        if (audioReady) startRing()
-        if (action === 'accept') {
-          // rovnou přijmi (po krátké prodlevě kvůli UI)
-          setTimeout(() => { acceptCall() }, 50)
-        } else if (action === 'decline') {
-          setTimeout(() => { declineCall() }, 50)
-        }
+      // Pokud ještě nejsou načtení uživatelé, zařaď do fronty
+      if (!usersRef.current || !(usersRef.current.length)) {
+        pendingCallRef.current = { type: 'action', action, data }
+        return
       }
-      apply()
+      const list = usersRef.current || []
+      const who = list.find(u => u.id === data.from) || list.find(u => (u.name||'').toLowerCase() === (data.fromName||'').toLowerCase())
+      if (who) setSelectedUser(who)
+      peerIdRef.current = data.from
+      callKindRef.current = data.kind || 'audio'
+      setCallState(cs => ({ ...cs, incoming: true, outgoing: false, active: false, connecting: false, kind: data.kind || 'audio', from: data.from, to: (user&&user.id)||null, remoteName: data.fromName || '' }))
+      if (audioReady) startRing()
+      if (action === 'accept') setTimeout(() => { acceptCall() }, 50)
+      else if (action === 'decline') setTimeout(() => { declineCall() }, 50)
     }
     window.addEventListener('message', onAction)
     return () => window.removeEventListener('message', onAction)
   }, [audioReady, user])
+
+  // Pokud přišla notifikace dřív než se načetli uživatelé, aplikuj ji teď
+  useEffect(() => {
+    const pending = pendingCallRef.current
+    if (!pending) return
+    if (!users || !users.length) return
+    if (pending.type === 'click') {
+      const d = pending.data
+      const byId = users.find(u => u.id === d.from)
+      if (byId) setSelectedUser(byId)
+      else if (d.fromName){
+        const byName = users.find(u => (u.name||'').toLowerCase() === (d.fromName||'').toLowerCase())
+        if (byName) setSelectedUser(byName)
+      }
+      if ((d.type === 'call') && d.from) {
+        peerIdRef.current = d.from
+        callKindRef.current = d.kind || 'audio'
+        setCallState(cs => ({ ...cs, incoming: true, outgoing: false, active: false, connecting: false, kind: d.kind || 'audio', from: d.from, to: (user&&user.id)||null, remoteName: d.fromName || '' }))
+        if (audioReady) startRing()
+        clearIncomingTimeout()
+        incomingTimeoutRef.current = setTimeout(() => { if (!callState.active) declineCall() }, 45000)
+      }
+    } else if (pending.type === 'action') {
+      const { action, data } = pending
+      const who = users.find(u => u.id === data.from) || users.find(u => (u.name||'').toLowerCase() === (data.fromName||'').toLowerCase())
+      if (who) setSelectedUser(who)
+      peerIdRef.current = data.from
+      callKindRef.current = data.kind || 'audio'
+      setCallState(cs => ({ ...cs, incoming: true, outgoing: false, active: false, connecting: false, kind: data.kind || 'audio', from: data.from, to: (user&&user.id)||null, remoteName: data.fromName || '' }))
+      if (audioReady) startRing()
+      if (action === 'accept') setTimeout(() => { acceptCall() }, 50)
+      else if (action === 'decline') setTimeout(() => { declineCall() }, 50)
+    }
+    pendingCallRef.current = null
+  }, [users, audioReady, user])
+
+  // Když se objeví <video ref={localVideoRef}> až po získání streamu, znovu ho připni
+  useEffect(() => {
+    const s = localStreamRef.current
+    const v = localVideoRef.current
+    if (v && s && v.srcObject !== s) {
+      try { v.srcObject = s; v.play && v.play() } catch(_){ }
+    }
+  }, [callState.kind, callState.incoming, callState.outgoing, callState.active, callState.connecting])
 
   // API base pro hovory a ICE
   useEffect(() => {
