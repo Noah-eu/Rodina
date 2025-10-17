@@ -834,29 +834,52 @@ export default function App() {
 
   // Pomocné: vytvoř/nahlaš PeerConnection
   async function ensurePeerConnection(kind='audio'){
-    if (pcRef.current) return pcRef.current
-    const iceResp = await fetch(`${apiBaseRef.current}/ice`).then(r=>r.json()).catch(()=>({ iceServers: [ { urls: 'stun:stun.l.google.com:19302' } ] }))
-    const pc = new RTCPeerConnection({ iceServers: iceResp.iceServers || [ { urls: 'stun:stun.l.google.com:19302' } ] })
-    pcRef.current = pc
-    const local = await ensureLocalMedia(kind)
-    local.getTracks().forEach(t => pc.addTrack(t, local))
-    pc.ontrack = (ev) => {
-      const [remote] = ev.streams
-      remoteStreamRef.current = remote
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = remote
-        try { remoteVideoRef.current.play() } catch(_){}
+    const existing = pcRef.current
+    if (!existing) {
+      const iceResp = await fetch(`${apiBaseRef.current}/ice`).then(r=>r.json()).catch(()=>({ iceServers: [ { urls: 'stun:stun.l.google.com:19302' } ] }))
+      const pc = new RTCPeerConnection({ iceServers: iceResp.iceServers || [ { urls: 'stun:stun.l.google.com:19302' } ] })
+      pcRef.current = pc
+      pc.ontrack = (ev) => {
+        const [remote] = ev.streams
+        remoteStreamRef.current = remote
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.srcObject = remote
+          try { remoteVideoRef.current.play() } catch(_){ }
+        }
+      }
+      pc.onicecandidate = async (e) => {
+        if (e.candidate && peerIdRef.current) {
+          try {
+            await fetch(`${apiBaseRef.current}/rt/ice`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ from: user.id, to: peerIdRef.current, candidate: e.candidate })
+            })
+          } catch(_){ }
+        }
       }
     }
-    pc.onicecandidate = async (e) => {
-      if (e.candidate && peerIdRef.current) {
-        try {
-          await fetch(`${apiBaseRef.current}/rt/ice`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ from: user.id, to: peerIdRef.current, candidate: e.candidate })
-          })
-        } catch(_){}
-      }
+
+    const pc = pcRef.current
+    const local = await ensureLocalMedia(kind)
+    const aTrack = local.getAudioTracks()[0] || null
+    const vTrack = (kind === 'video') ? (local.getVideoTracks()[0] || null) : null
+    // Zajisti transceivery v režimu sendrecv, pak připoj lokální tracky přes replaceTrack
+    const ensureTransceiver = (k) => {
+      let t = pc.getTransceivers().find(x => (x.receiver && x.receiver.track && x.receiver.track.kind === k) || x.kind === k)
+      if (!t) t = pc.addTransceiver(k, { direction: 'sendrecv' })
+      return t
+    }
+    if (aTrack) {
+      const t = ensureTransceiver('audio')
+      try { await t.sender.replaceTrack(aTrack) } catch { try { pc.addTrack(aTrack, local) } catch {} }
+    } else {
+      ensureTransceiver('audio')
+    }
+    if (vTrack) {
+      const t = ensureTransceiver('video')
+      try { await t.sender.replaceTrack(vTrack) } catch { try { pc.addTrack(vTrack, local) } catch {} }
+    } else if (kind === 'video') {
+      ensureTransceiver('video')
     }
     return pc
   }
@@ -1009,6 +1032,26 @@ export default function App() {
       }
     } catch (_) {}
   }
+
+  // Periodicky ověř, že existuje push subscription – pokud chybí, přihlásí se znovu s current userId
+  useEffect(() => {
+    if (!user) return
+    let tm = null
+    const tick = async () => {
+      try {
+        const reg = await navigator.serviceWorker?.ready
+        if (!reg) return
+        const sub = await reg.pushManager.getSubscription()
+        if (!sub) {
+          const apiBase = import.meta.env.PROD ? '/api' : ((import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '') + '/api')
+          await initPush(reg, apiBase, user.id)
+        }
+      } catch {}
+      tm = setTimeout(tick, 30000)
+    }
+    tick()
+    return () => { if (tm) clearTimeout(tm) }
+  }, [user])
 
   const handleLogout = () => {
     localStorage.removeItem('rodina:user')
