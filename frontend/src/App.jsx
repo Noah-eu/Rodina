@@ -640,7 +640,8 @@ export default function App() {
         const from = url.searchParams.get('from') || ''
         const fromName = url.searchParams.get('fromName') || ''
         const kind = url.searchParams.get('kind') || 'audio'
-        const tsStr = url.searchParams.get('ts') || ''
+  const tsStr = url.searchParams.get('ts') || ''
+  const auto = url.searchParams.get('autopopup') === '1'
         const ts = tsStr ? parseInt(tsStr, 10) : 0
         // Stará notifikace (starší než 60s) se ignoruje
         if (ts && (Date.now() - ts > 60000)) return
@@ -655,6 +656,10 @@ export default function App() {
             callKindRef.current = kind || 'audio'
             setCallState(cs => ({ ...cs, incoming: true, outgoing: false, active: false, connecting: false, kind, from: from || null, to: (user&&user.id)||null, remoteName: fromName || (person && person.name) || '' }))
             if (audioReady) startRing()
+            // Při autopopupu ukážeme overlay a necháme uživatele přijmout rovnou
+            if (auto && !audioReady) {
+              // nic – počkáme na uživatelské gesto
+            }
             // Timeout pro nezvednutý příchozí hovor (45s)
             clearIncomingTimeout()
             incomingTimeoutRef.current = setTimeout(() => {

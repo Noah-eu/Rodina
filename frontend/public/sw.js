@@ -17,12 +17,21 @@ self.addEventListener('push', function(event) {
     kind: payload.kind || 'audio',
     ts: payload.ts || Date.now()
   }
+  // Pro hovory připrav delší vibrační pattern (Android)
+  let vibe = undefined
+  if (data.type === 'call') {
+    try {
+      const seq = []
+      for (let i=0;i<20;i++) { seq.push(250, 180) } // ~8.6s vibrací
+      vibe = seq
+    } catch(_) { vibe = [150,100,150,100,150] }
+  }
   const opts = {
     body,
     tag: data.type === 'call' ? `call-${data.from || ''}` : undefined,
     renotify: data.type === 'call',
     requireInteraction: data.type === 'call',
-    vibrate: data.type === 'call' ? [150, 100, 150, 100, 150] : undefined,
+    vibrate: vibe,
     icon: '/assets/default-avatar.png',
     actions: data.type === 'call' ? [
       { action: 'accept', title: 'Přijmout' },
@@ -30,7 +39,27 @@ self.addEventListener('push', function(event) {
     ] : undefined,
     data
   }
-  event.waitUntil(self.registration.showNotification(title, opts))
+  event.waitUntil((async () => {
+    await self.registration.showNotification(title, opts)
+    // Experimentální: zkusit otevřít okno s appkou pro rychlé přijetí (některé prohlížeče blokují bez interakce)
+    try {
+      if (data.type === 'call') {
+        const all = await clients.matchAll({ type: 'window', includeUncontrolled: true })
+        const hasVisible = all && all.length
+        if (!hasVisible) {
+          const params = new URLSearchParams()
+          params.set('notify', '1')
+          params.set('ntype', data.type)
+          if (data.from) params.set('from', data.from)
+          if (data.fromName) params.set('fromName', data.fromName)
+          if (data.kind) params.set('kind', data.kind)
+          if (data.ts) params.set('ts', String(data.ts))
+          params.set('autopopup', '1')
+          await clients.openWindow('/?' + params.toString())
+        }
+      }
+    } catch(_) {}
+  })())
 });
 
 self.addEventListener('notificationclick', function(event){
