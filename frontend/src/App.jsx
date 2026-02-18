@@ -382,15 +382,37 @@ function ChatWindow({ user, selectedUser }) {
       })
       // Fire-and-forget push notify via backend (if configured for dev or via Netlify proxy in prod)
       try {
-    // API base is '/api' in PROD (redirected to proxy) and '<DEV_ORIGIN>/api' in DEV (see main.jsx)
-    const apiBase = import.meta.env.PROD ? '/api' : ((import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '') + '/api')
+        const envBase = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '')
+        const savedBase = (localStorage.getItem('rodina:apiBase') || '').replace(/\/$/, '')
+        const apiBases = []
+        const pushBase = (value) => { if (value && !apiBases.includes(value)) apiBases.push(value) }
+        if (import.meta.env.PROD) {
+          pushBase('/api')
+          if (envBase) pushBase(`${envBase}/api`)
+          if (savedBase) pushBase(savedBase.endsWith('/api') ? savedBase : `${savedBase}/api`)
+          pushBase('https://rodina.onrender.com/api')
+          pushBase('https://rodina-backend.onrender.com/api')
+        } else {
+          if (envBase) pushBase(`${envBase}/api`)
+          pushBase('/api')
+        }
         const textPreview = (input || '').trim()
         const body = textPreview || (imageUrl ? 'Poslal(a) fotku' : (audioUrl ? 'Poslal(a) hlasovou zprávu' : 'Nová zpráva'))
-        fetch(`${apiBase}/push/notify`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: `${user.name}`, body, to: selectedUser.id })
-        }).catch(()=>{})
+        for (const apiBase of apiBases) {
+          try {
+            const resp = await fetch(`${apiBase}/push/notify`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ title: `${user.name}`, body, to: selectedUser.id })
+            })
+            if (resp.ok) {
+              if (/^https?:\/\//.test(apiBase)) {
+                try { localStorage.setItem('rodina:apiBase', apiBase.replace(/\/api$/, '')) } catch (_) {}
+              }
+              break
+            }
+          } catch (_) {}
+        }
       } catch (_) {}
       setInput('')
       setImageFile(null)
@@ -526,6 +548,7 @@ export default function App() {
   const socketRef = useRef(null)
   const peerIdRef = useRef(null)
   const apiBaseRef = useRef(null)
+  const apiBasesRef = useRef([])
   // Diagnostika
   const [diag, setDiag] = useState({ pusher: 'off', sw: 'off', pushPerm: 'default', pushSub: false, iceCount: 0, apiBase: '' })
   // Aktuální typ hovoru (audio/video) mimo React state, aby se předešlo stale closures
@@ -534,6 +557,69 @@ export default function App() {
   const pendingCallRef = useRef(null)
   const seenCallIdsRef = useRef(new Set())
   const seenFirestoreCallIdsRef = useRef(new Set())
+
+  const getApiBaseCandidates = () => {
+    const envBase = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '')
+    const savedBase = (localStorage.getItem('rodina:apiBase') || '').replace(/\/$/, '')
+    const directProdHints = ['https://rodina.onrender.com/api', 'https://rodina-backend.onrender.com/api']
+    const out = []
+    const push = (v) => { if (v && !out.includes(v)) out.push(v) }
+
+    if (import.meta.env.PROD) {
+      push('/api')
+      if (envBase) push(`${envBase}/api`)
+      if (savedBase) push(savedBase.endsWith('/api') ? savedBase : `${savedBase}/api`)
+      directProdHints.forEach(push)
+    } else {
+      if (envBase) push(`${envBase}/api`)
+      push('/api')
+    }
+    return out
+  }
+
+  const postApi = async (path, payload) => {
+    const bases = apiBasesRef.current && apiBasesRef.current.length ? apiBasesRef.current : getApiBaseCandidates()
+    let lastErr = null
+    for (const base of bases) {
+      try {
+        const resp = await fetch(`${base}${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload || {})
+        })
+        if (resp.ok) {
+          if (/^https?:\/\//.test(base)) {
+            try { localStorage.setItem('rodina:apiBase', base.replace(/\/api$/, '')) } catch (_) {}
+          }
+          return resp
+        }
+        lastErr = new Error(`HTTP ${resp.status} on ${base}${path}`)
+      } catch (e) {
+        lastErr = e
+      }
+    }
+    throw lastErr || new Error('API request failed')
+  }
+
+  const getApi = async (path) => {
+    const bases = apiBasesRef.current && apiBasesRef.current.length ? apiBasesRef.current : getApiBaseCandidates()
+    let lastErr = null
+    for (const base of bases) {
+      try {
+        const resp = await fetch(`${base}${path}`)
+        if (resp.ok) {
+          if (/^https?:\/\//.test(base)) {
+            try { localStorage.setItem('rodina:apiBase', base.replace(/\/api$/, '')) } catch (_) {}
+          }
+          return resp
+        }
+        lastErr = new Error(`HTTP ${resp.status} on ${base}${path}`)
+      } catch (e) {
+        lastErr = e
+      }
+    }
+    throw lastErr || new Error('API request failed')
+  }
 
   // Po prvním gestu uživatele odemkni AudioContext a případně požádej o notifikační oprávnění
   useEffect(() => {
@@ -845,7 +931,9 @@ export default function App() {
 
   // API base pro hovory a ICE
   useEffect(() => {
-    const base = import.meta.env.PROD ? '/api' : ((import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '') + '/api')
+    const bases = getApiBaseCandidates()
+    const base = bases[0] || '/api'
+    apiBasesRef.current = bases
     apiBaseRef.current = base
     setDiag(d => ({ ...d, apiBase: base }))
     // Zjisti SW/Push stav
@@ -861,7 +949,7 @@ export default function App() {
         setDiag(d => ({ ...d, sw: sw ? 'on' : 'off', pushPerm: perm, pushSub: sub }))
       } catch(_) {}
       try {
-        const ice = await fetch(base + '/ice').then(r=>r.json()).catch(()=>({ iceServers: [] }))
+        const ice = await getApi('/ice').then(r=>r.json()).catch(()=>({ iceServers: [] }))
         const count = Array.isArray(ice.iceServers) ? ice.iceServers.length : 0
         setDiag(d => ({ ...d, iceCount: count }))
       } catch(_) {}
@@ -939,10 +1027,7 @@ export default function App() {
         try {
           const answer = await pcRef.current.createAnswer()
           await pcRef.current.setLocalDescription(answer)
-          await fetch(`${apiBaseRef.current}/rt/answer`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ from: user.id, to: data.from, sdp: pcRef.current.localDescription, kind: data.kind || 'audio' })
-          })
+          await postApi('/rt/answer', { from: user.id, to: data.from, sdp: pcRef.current.localDescription, kind: data.kind || 'audio' })
           stopRing()
           setCallState(cs => ({ ...cs, active: true, incoming: false, outgoing: false, connecting: true }))
         } catch (e) {}
@@ -970,10 +1055,7 @@ export default function App() {
           await ensurePeerConnection(k)
           const offer = await pcRef.current.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: k==='video' })
           await pcRef.current.setLocalDescription(offer)
-          await fetch(`${apiBaseRef.current}/rt/offer`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ from: user.id, to: peerIdRef.current, sdp: pcRef.current.localDescription, kind: k })
-          })
+          await postApi('/rt/offer', { from: user.id, to: peerIdRef.current, sdp: pcRef.current.localDescription, kind: k })
         } catch (_) {}
       }
 
@@ -1056,7 +1138,6 @@ export default function App() {
     if (!user) return
     let tm = null
     let stop = false
-    const base = import.meta.env.PROD ? '/api' : ((import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '') + '/api')
 
     const handleIncomingInfo = async (info) => {
       if (!info || info.to !== user.id) return
@@ -1096,7 +1177,7 @@ export default function App() {
 
     const tick = async () => {
       try {
-        const resp = await fetch(`${base}/call/pending?userId=${encodeURIComponent(user.id)}`)
+        const resp = await getApi(`/call/pending?userId=${encodeURIComponent(user.id)}`)
         if (resp.ok) {
           const payload = await resp.json()
           const calls = Array.isArray(payload.calls) ? payload.calls : []
@@ -1219,7 +1300,7 @@ export default function App() {
     }
     pcCreatingRef.current = true
     try {
-      const iceResp = await fetch(`${apiBaseRef.current}/ice`).then(r=>r.json()).catch(()=>({ iceServers: [ { urls: 'stun:stun.l.google.com:19302' } ] }))
+      const iceResp = await getApi('/ice').then(r=>r.json()).catch(()=>({ iceServers: [ { urls: 'stun:stun.l.google.com:19302' } ] }))
       const pc = new RTCPeerConnection({ iceServers: iceResp.iceServers || [ { urls: 'stun:stun.l.google.com:19302' } ] })
       pcRef.current = pc
       pc.ontrack = (ev) => {
@@ -1233,10 +1314,7 @@ export default function App() {
       pc.onicecandidate = async (e) => {
         if (e.candidate && peerIdRef.current) {
           try {
-            await fetch(`${apiBaseRef.current}/rt/ice`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ from: user.id, to: peerIdRef.current, candidate: e.candidate })
-            })
+            await postApi('/rt/ice', { from: user.id, to: peerIdRef.current, candidate: e.candidate })
           } catch(_){ }
         }
       }
@@ -1265,7 +1343,7 @@ export default function App() {
     callKindRef.current = kind
     setCallState({ active: false, incoming: false, outgoing: true, kind, from: user.id, to: selectedUser.id, connecting: true, remoteName: selectedUser.name })
     // Oznám příchozí hovor druhé straně (ring); offer se pošle až po explicitním accept
-    try { await fetch(`${apiBaseRef.current}/call`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: user.id, to: selectedUser.id, kind, fromName: user.name }) }) } catch(_){}
+    try { await postApi('/call', { from: user.id, to: selectedUser.id, kind, fromName: user.name }) } catch(_){}
     // Firestore fallback, když backend/realtime nedoručí event
     try {
       if (db) {
@@ -1294,7 +1372,7 @@ export default function App() {
   async function endCall(){
     // pošli hangup peerovi
     if (peerIdRef.current) {
-      try { await fetch(`${apiBaseRef.current}/rt/hangup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: user.id, to: peerIdRef.current }) }) } catch(_){}
+      try { await postApi('/rt/hangup', { from: user.id, to: peerIdRef.current }) } catch(_){ }
     }
     stopRing()
     try { pcRef.current?.getSenders?.().forEach(s => { try { s.track && s.track.stop() } catch(_){} }) } catch(_){ }
@@ -1317,7 +1395,7 @@ export default function App() {
       await ensurePeerConnection(k)
       // signalizuj protistraně, že může poslat offer
       if (peerIdRef.current) {
-        await fetch(`${apiBaseRef.current}/rt/accept`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ from: user.id, to: peerIdRef.current }) })
+        await postApi('/rt/accept', { from: user.id, to: peerIdRef.current })
       }
       stopRing()
       clearIncomingTimeout()
@@ -1328,7 +1406,7 @@ export default function App() {
     // pošli decline a ukonči
     const peer = peerIdRef.current
     if (peer) {
-      fetch(`${apiBaseRef.current}/rt/decline`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ from: user.id, to: peer }) }).catch(()=>{})
+      postApi('/rt/decline', { from: user.id, to: peer }).catch(()=>{})
     }
     stopRing()
     endCall()
