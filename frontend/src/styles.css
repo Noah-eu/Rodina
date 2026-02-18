@@ -239,6 +239,55 @@ input:focus-visible,
 .feedback { font-size:14px; font-weight:600; color: var(--ok); margin:0; text-align:center; }
 .feedback:empty { display:none; }
 
+/* Install popup */
+.install-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.55);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3200;
+  padding: 18px;
+}
+.install-modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  width: 100%;
+  max-width: 390px;
+  border-radius: 22px;
+  padding: 22px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+}
+.install-modal h3 {
+  margin: 0;
+  font-size: 24px;
+}
+.install-modal p {
+  margin: 0;
+  color: var(--text-dim);
+}
+.install-modal-icon {
+  width: 80px;
+  height: 80px;
+  border-radius: 20px;
+  box-shadow: 0 8px 20px rgba(0,0,0,.28);
+  border: 1px solid #3d4b5c;
+}
+.install-modal-actions {
+  margin-top: 6px;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
 /* Utility */
 .hidden { display:none !important; }
 .truncate { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

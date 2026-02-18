@@ -1279,6 +1279,7 @@ export default function App() {
   const [theme, setTheme] = useState(localStorage.getItem('rodina:theme') || 'default')
   const [needNotify, setNeedNotify] = useState(false)
   const [installEvt, setInstallEvt] = useState(null)
+  const [showInstallModal, setShowInstallModal] = useState(false)
 
   const handleThemeChange = (next) => {
     setTheme(next)
@@ -1312,10 +1313,48 @@ export default function App() {
     return () => window.removeEventListener('beforeinstallprompt', handler)
   }, [])
 
-  if (!user) return <Auth onAuth={handleAuth} />
+  useEffect(() => {
+    if (!installEvt) return
+    try {
+      if (sessionStorage.getItem('rodina:installPromptShown') === '1') return
+      sessionStorage.setItem('rodina:installPromptShown', '1')
+    } catch (_) {}
+    setShowInstallModal(true)
+  }, [installEvt])
+
+  const promptInstall = async () => {
+    if (!installEvt) return
+    try {
+      await installEvt.prompt()
+      await installEvt.userChoice
+    } catch (_) {}
+    setShowInstallModal(false)
+    setInstallEvt(null)
+  }
+
+  const dismissInstallModal = () => {
+    setShowInstallModal(false)
+  }
+
+  const installModal = showInstallModal && installEvt ? (
+    <div className="install-backdrop" onClick={dismissInstallModal}>
+      <div className="install-modal" onClick={(e) => e.stopPropagation()}>
+        <img src="/icons/icon-192.png" alt="Ikona aplikace Rodina" className="install-modal-icon" />
+        <h3>Nainstalovat aplikaci Rodina?</h3>
+        <p>Budete ji mít rychle po ruce přímo na ploše telefonu.</p>
+        <div className="install-modal-actions">
+          <button type="button" className="btn secondary" onClick={dismissInstallModal}>Později</button>
+          <button type="button" className="btn primary" onClick={promptInstall}>Instalovat</button>
+        </div>
+      </div>
+    </div>
+  ) : null
+
+  if (!user) return <>{installModal}<Auth onAuth={handleAuth} /></>
 
   return (
   <div className={"app" + (selectedUser ? " chat-open" : " no-chat") + (theme && theme!=='default' ? ` theme-${theme}` : '')}>
+      {installModal}
       {/* Globální odemknutí zvuku – pomůže, aby příchozí hovor mohl hned zvonit */}
       {!audioReady && (
         <div style={{position:'fixed',left:10,bottom:10,zIndex:3000}}>
@@ -1355,7 +1394,7 @@ export default function App() {
               }} style={{background:'#1f2937',border:'1px solid #374151',color:'#cbd5e1',borderRadius:8,padding:'6px 8px',cursor:'pointer'}}>🔔 Povolit</button>
             )}
             {installEvt && (
-              <button title="Instalovat" onClick={async()=>{ try{ await installEvt.prompt(); setInstallEvt(null) }catch(_){} }} style={{background:'#1f2937',border:'1px solid #374151',color:'#cbd5e1',borderRadius:8,padding:'6px 8px',cursor:'pointer'}}>⬇️ Instalovat</button>
+              <button title="Instalovat" onClick={promptInstall} style={{background:'#1f2937',border:'1px solid #374151',color:'#cbd5e1',borderRadius:8,padding:'6px 8px',cursor:'pointer'}}>⬇️ Instalovat</button>
             )}
             <button className="settings-btn" onClick={() => setIsSettingsOpen(true)}>⚙️</button>
           </div>
