@@ -139,7 +139,7 @@ app.post('/api/register', upload.single('avatar'), async (req, res) => {
 app.post('/api/login', async (req, res) => {
   const { id, name, pin } = req.body || {};
   console.log('[LOGIN] vstup:', { id, name, pin });
-  if ((!name && !id) || !pin) {
+  if ((!name && !id) || !pin || String(pin).length !== 4) {
     console.log('[LOGIN] Neplatný vstup');
     return res.status(400).json({ error: 'Neplatný vstup' });
   }

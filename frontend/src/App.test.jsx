@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import { vi } from 'vitest'
 
 vi.mock('./firebase', () => ({
@@ -13,7 +13,15 @@ vi.mock('./push', () => ({
 
 import App from './App'
 
-test('smoke - render app', ()=>{
-  render(<App />)
-  expect(screen.getByRole('heading', { name: /Vítejte v Rodině/i })).toBeInTheDocument()
+test('smoke - render app', async ()=>{
+  let view
+  await act(async () => {
+    view = render(<App />)
+  })
+
+  expect(await screen.findByRole('heading', { name: /Vítejte v Rodině/i })).toBeInTheDocument()
+
+  await act(async () => {
+    view.unmount()
+  })
 })
