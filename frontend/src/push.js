@@ -25,7 +25,10 @@ export async function initPush(swReg, apiBase='', userId=null){
     }
     if (!pkRes || !pkRes.ok) { console.warn('[push] No publicKey endpoint reachable'); return }
     const { publicKey } = await pkRes.json()
-    const sub = await swReg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) })
+    let sub = await swReg.pushManager.getSubscription().catch(()=>null)
+    if (!sub) {
+      sub = await swReg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) })
+    }
     let subRes = await fetch(`${base}/push/subscribe`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ subscription: sub, userId }) }).catch(()=>null)
     if (!subRes || !subRes.ok) {
       const direct = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '') + '/api'

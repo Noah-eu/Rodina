@@ -6,6 +6,7 @@ import bcrypt from 'bcryptjs'
 import { onSnapshot, orderBy, addDoc, serverTimestamp } from 'firebase/firestore'
 import { initPush } from './push'
 import Pusher from 'pusher-js'
+import { io as ioClient } from 'socket.io-client'
 
 // Komponenta pro zobrazení jednoho uživatele v seznamu
 function UserListItem({ user, isSelected, onSelect, unread = 0 }) {
@@ -522,6 +523,7 @@ export default function App() {
   const remoteVideoRef = useRef(null)
   const pusherRef = useRef(null)
   const channelRef = useRef(null)
+  const socketRef = useRef(null)
   const peerIdRef = useRef(null)
   const apiBaseRef = useRef(null)
   // Diagnostika
@@ -864,24 +866,29 @@ export default function App() {
     })()
   }, [])
 
-  // Inicializace Pusher po přihlášení
+  // Inicializace realtime kanálu (Pusher + Socket.IO fallback) po přihlášení
   useEffect(() => {
     if (!user) return
     try {
       const key = import.meta.env.VITE_PUSHER_KEY
       const cluster = import.meta.env.VITE_PUSHER_CLUSTER || 'eu'
-      if (!key) return
-      const p = new Pusher(key, { cluster, forceTLS: true })
-      const ch = p.subscribe('famcall')
-      pusherRef.current = p
-      channelRef.current = ch
+      let p = null
+      let ch = null
+      if (key) {
+        p = new Pusher(key, { cluster, forceTLS: true })
+        ch = p.subscribe('famcall')
+        pusherRef.current = p
+        channelRef.current = ch
+      }
 
       // Diagnostika Pusheru
-      try {
-        p.connection.bind('state_change', (states) => {
-          setDiag(d => ({ ...d, pusher: states.current }))
-        })
-      } catch(_) {}
+      if (p) {
+        try {
+          p.connection.bind('state_change', (states) => {
+            setDiag(d => ({ ...d, pusher: states.current }))
+          })
+        } catch(_) {}
+      }
 
       const onIncoming = (info) => {
         if (!info || info.to !== user.id) return
@@ -984,16 +991,60 @@ export default function App() {
         endCall()
       }
 
-      ch.bind('incoming_call', onIncoming)
-  ch.bind('webrtc_offer', onOffer)
-      ch.bind('webrtc_answer', onAnswer)
-      ch.bind('webrtc_ice', onIce)
-  ch.bind('webrtc_accept', onAccept)
-  ch.bind('webrtc_decline', onDecline)
-  ch.bind('webrtc_hangup', onHangup)
+      if (ch) {
+        ch.bind('incoming_call', onIncoming)
+        ch.bind('webrtc_offer', onOffer)
+        ch.bind('webrtc_answer', onAnswer)
+        ch.bind('webrtc_ice', onIce)
+        ch.bind('webrtc_accept', onAccept)
+        ch.bind('webrtc_decline', onDecline)
+        ch.bind('webrtc_hangup', onHangup)
+      }
+
+      // Fallback realtime přes Socket.IO (funguje i bez Pusher env)
+      const socketBase = (import.meta.env.VITE_API_URL || (import.meta.env.PROD ? window.location.origin : 'http://localhost:3001')).replace(/\/$/, '')
+      const socket = ioClient(socketBase, {
+        transports: ['websocket', 'polling'],
+        timeout: 10000
+      })
+      socketRef.current = socket
+      socket.on('connect', () => {
+        try { socket.emit('registerSocket', user.id) } catch (_){ }
+      })
+      socket.on('incoming_call', onIncoming)
+      socket.on('webrtc_offer', onOffer)
+      socket.on('webrtc_answer', onAnswer)
+      socket.on('webrtc_ice', onIce)
+      socket.on('webrtc_accept', onAccept)
+      socket.on('webrtc_decline', onDecline)
+      socket.on('webrtc_hangup', onHangup)
 
       return () => {
-        try { ch.unbind('incoming_call', onIncoming); ch.unbind('webrtc_offer', onOffer); ch.unbind('webrtc_answer', onAnswer); ch.unbind('webrtc_ice', onIce); ch.unbind('webrtc_accept', onAccept); ch.unbind('webrtc_decline', onDecline); ch.unbind('webrtc_hangup', onHangup); p.unsubscribe('famcall'); p.disconnect() } catch(_){}
+        try {
+          if (ch) {
+            ch.unbind('incoming_call', onIncoming)
+            ch.unbind('webrtc_offer', onOffer)
+            ch.unbind('webrtc_answer', onAnswer)
+            ch.unbind('webrtc_ice', onIce)
+            ch.unbind('webrtc_accept', onAccept)
+            ch.unbind('webrtc_decline', onDecline)
+            ch.unbind('webrtc_hangup', onHangup)
+          }
+          if (p) {
+            p.unsubscribe('famcall')
+            p.disconnect()
+          }
+          if (socket) {
+            socket.off('incoming_call', onIncoming)
+            socket.off('webrtc_offer', onOffer)
+            socket.off('webrtc_answer', onAnswer)
+            socket.off('webrtc_ice', onIce)
+            socket.off('webrtc_accept', onAccept)
+            socket.off('webrtc_decline', onDecline)
+            socket.off('webrtc_hangup', onHangup)
+            socket.disconnect()
+          }
+        } catch(_){}
       }
     } catch (_) {}
   }, [user])
@@ -1256,11 +1307,9 @@ export default function App() {
       try {
         const reg = await navigator.serviceWorker?.ready
         if (!reg) return
-        const sub = await reg.pushManager.getSubscription()
-        if (!sub) {
-          const apiBase = import.meta.env.PROD ? '/api' : ((import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '') + '/api')
-          await initPush(reg, apiBase, user.id)
-        }
+        const apiBase = import.meta.env.PROD ? '/api' : ((import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '') + '/api')
+        // Vždy synchronizuj subscription s aktuálním userId (i když subscription už existuje)
+        await initPush(reg, apiBase, user.id)
       } catch {}
       tm = setTimeout(tick, 30000)
     }

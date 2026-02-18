@@ -165,4 +165,31 @@ describe('Backend feature integration', () => {
       expect(res.body.ok).toBe(true)
     }
   })
+
+  test('push subscription se přemapuje na aktuální userId', async () => {
+    const endpoint = `https://example.com/push/${Date.now()}`
+    const sub = {
+      endpoint,
+      keys: { p256dh: 'k1', auth: 'k2' }
+    }
+
+    const first = await request(app)
+      .post('/api/push/subscribe')
+      .send({ subscription: sub, userId: 'user-A' })
+
+    expect(first.statusCode).toBe(200)
+    expect(first.body.ok).toBe(true)
+
+    const second = await request(app)
+      .post('/api/push/subscribe')
+      .send({ subscription: sub, userId: 'user-B' })
+
+    expect(second.statusCode).toBe(200)
+    expect(second.body.ok).toBe(true)
+
+    const debug = await request(app).get('/api/push/debug')
+    expect(debug.statusCode).toBe(200)
+    expect(typeof debug.body.subscriptions).toBe('number')
+    expect(debug.body.subscriptions).toBeGreaterThan(0)
+  })
 })
