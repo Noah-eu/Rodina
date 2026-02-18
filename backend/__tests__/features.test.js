@@ -166,6 +166,45 @@ describe('Backend feature integration', () => {
     }
   })
 
+  test('pending call fallback vrátí hovor a po consume zmizí', async () => {
+    const callPayload = {
+      from: 'caller-fallback',
+      fromName: 'Volající',
+      to: 'callee-fallback',
+      kind: 'audio',
+      ts: Date.now()
+    }
+
+    const callRes = await request(app).post('/api/call').send(callPayload)
+    expect(callRes.statusCode).toBe(200)
+    expect(callRes.body.ok).toBe(true)
+
+    const pending1 = await request(app)
+      .get('/api/call/pending')
+      .query({ userId: 'callee-fallback' })
+
+    expect(pending1.statusCode).toBe(200)
+    expect(Array.isArray(pending1.body.calls)).toBe(true)
+    expect(pending1.body.calls.length).toBeGreaterThan(0)
+    const callId = pending1.body.calls[0].id
+    expect(callId).toBeTruthy()
+
+    const consume = await request(app)
+      .post('/api/call/consume')
+      .send({ id: callId, userId: 'callee-fallback' })
+
+    expect(consume.statusCode).toBe(200)
+    expect(consume.body.ok).toBe(true)
+
+    const pending2 = await request(app)
+      .get('/api/call/pending')
+      .query({ userId: 'callee-fallback' })
+
+    expect(pending2.statusCode).toBe(200)
+    expect(Array.isArray(pending2.body.calls)).toBe(true)
+    expect(pending2.body.calls.find(c => c.id === callId)).toBeFalsy()
+  })
+
   test('push subscription se přemapuje na aktuální userId', async () => {
     const endpoint = `https://example.com/push/${Date.now()}`
     const sub = {

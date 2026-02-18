@@ -356,7 +356,23 @@ app.post('/api/rt/hangup', (req, res)=>{ const payload = req.body || {}; broadca
 app.post('/api/rt/typing', (req, res)=>{ const payload = req.body || {}; broadcast('typing', payload); res.json({ ok: true }) })
 app.post('/api/rt/delivered', (req, res)=>{ const payload = req.body || {}; broadcast('delivered', payload); res.json({ ok: true }) })
 app.post('/api/call', async (req, res)=>{
-  const info = { ...(req.body || {}), ts: Date.now() };
+  const info = {
+    id: nanoid(),
+    ...(req.body || {}),
+    ts: Number((req.body || {}).ts) || Date.now(),
+    consumedAt: null
+  };
+  // Ulož do fronty, aby příjemce mohl hovor vyzvednout i pollingem
+  readDB();
+  dbData.calls = Array.isArray(dbData.calls) ? dbData.calls : [];
+  dbData.calls.push(info);
+  // Udrž frontu rozumně malou + vyčisti staré záznamy
+  const now = Date.now();
+  dbData.calls = dbData.calls
+    .filter(c => now - (Number(c.ts) || 0) < 10 * 60 * 1000)
+    .slice(-500);
+  writeDB();
+
   broadcast('incoming_call', info);
   // Push oznámení o příchozím hovoru
   readDB();
@@ -384,6 +400,38 @@ app.post('/api/call', async (req, res)=>{
   }
   res.json({ ok: true })
 })
+
+// Polling fallback: příjemce si načte nevyřízené hovory
+app.get('/api/call/pending', (req, res) => {
+  const userId = String(req.query.userId || '').trim();
+  if (!userId) return res.status(400).json({ error: 'Missing userId' });
+  readDB();
+  dbData.calls = Array.isArray(dbData.calls) ? dbData.calls : [];
+  const now = Date.now();
+  // průběžný cleanup
+  dbData.calls = dbData.calls.filter(c => now - (Number(c.ts) || 0) < 10 * 60 * 1000);
+  const calls = dbData.calls.filter(c =>
+    c &&
+    c.to === userId &&
+    !c.consumedAt &&
+    (now - (Number(c.ts) || 0) < 60 * 1000)
+  );
+  writeDB();
+  res.json({ calls });
+});
+
+// Potvrzení doručení hovoru, aby se neopakoval dokola
+app.post('/api/call/consume', (req, res) => {
+  const { id, userId } = req.body || {};
+  if (!id || !userId) return res.status(400).json({ error: 'Missing id/userId' });
+  readDB();
+  dbData.calls = Array.isArray(dbData.calls) ? dbData.calls : [];
+  const call = dbData.calls.find(c => c.id === id && c.to === userId);
+  if (!call) return res.status(404).json({ error: 'Call not found' });
+  call.consumedAt = Date.now();
+  writeDB();
+  res.json({ ok: true });
+});
 
 // Web Push: get VAPID public key and subscribe
 app.get('/api/push/publicKey', (req, res)=>{

@@ -41,6 +41,34 @@ test('příchozí hovor se zobrazí druhému klientovi', async ({ browser }) => 
 
   expect(callRes.ok).toBeTruthy()
 
+  const pendingHasCall = await pageB.evaluate(async ({ calleeId, callerId }) => {
+    const endpoint = `http://localhost:3001/api/call/pending?userId=${encodeURIComponent(calleeId)}`
+    for (let i = 0; i < 8; i++) {
+      try {
+        const r = await fetch(endpoint)
+        if (r.ok) {
+          const j = await r.json()
+          const calls = Array.isArray(j.calls) ? j.calls : []
+          if (calls.some((c) => c.from === callerId && c.to === calleeId)) return true
+        }
+      } catch (_) {}
+      await new Promise((resolve) => setTimeout(resolve, 300))
+    }
+    return false
+  }, { calleeId: callee.id, callerId: caller.id })
+
+  expect(pendingHasCall).toBeTruthy()
+
+  await pageB.evaluate((payload) => {
+    window.postMessage({ type: 'sw:notifyClick', data: payload }, window.location.origin)
+  }, {
+    type: 'call',
+    from: caller.id,
+    fromName: caller.name,
+    kind: 'audio',
+    ts: Date.now()
+  })
+
   await expect(pageB.getByText('Příchozí hovor od Volající')).toBeVisible({ timeout: 15000 })
 
   await ctxA.close()

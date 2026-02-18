@@ -532,6 +532,7 @@ export default function App() {
   const callKindRef = useRef('audio')
   // Fronta pro události z SW, než se načte seznam uživatelů
   const pendingCallRef = useRef(null)
+  const seenCallIdsRef = useRef(new Set())
 
   // Po prvním gestu uživatele odemkni AudioContext a případně požádej o notifikační oprávnění
   useEffect(() => {
@@ -1048,6 +1049,70 @@ export default function App() {
       }
     } catch (_) {}
   }, [user])
+
+  // Polling fallback pro příchozí hovory (funguje i bez realtime spojení)
+  useEffect(() => {
+    if (!user) return
+    let tm = null
+    let stop = false
+    const base = import.meta.env.PROD ? '/api' : ((import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '') + '/api')
+
+    const handleIncomingInfo = async (info) => {
+      if (!info || info.to !== user.id) return
+      if (info.id && seenCallIdsRef.current.has(info.id)) return
+      if (info.id) seenCallIdsRef.current.add(info.id)
+      if (info.ts && (Date.now() - info.ts > 60000)) return
+
+      peerIdRef.current = info.from
+      callKindRef.current = info.kind || 'audio'
+      try {
+        const list = usersRef.current || []
+        const byId = list.find(u => u.id === info.from)
+        const byName = !byId && info.fromName ? list.find(u => (u.name || '').toLowerCase() === (info.fromName || '').toLowerCase()) : null
+        const who = byId || byName
+        if (who) setSelectedUser(who)
+      } catch (_) {}
+
+      setCallState(cs => ({
+        ...cs,
+        incoming: true,
+        outgoing: false,
+        active: false,
+        connecting: false,
+        kind: info.kind || 'audio',
+        from: info.from,
+        to: info.to,
+        remoteName: info.fromName || ''
+      }))
+
+      if (audioReady) startRing()
+      showCallNotification({ from: info.from, fromName: info.fromName || '', kind: info.kind || 'audio', ts: info.ts || Date.now() })
+      clearIncomingTimeout()
+      incomingTimeoutRef.current = setTimeout(() => {
+        if (!callState.active) declineCall()
+      }, 45000)
+    }
+
+    const tick = async () => {
+      try {
+        const resp = await fetch(`${base}/call/pending?userId=${encodeURIComponent(user.id)}`)
+        if (resp.ok) {
+          const payload = await resp.json()
+          const calls = Array.isArray(payload.calls) ? payload.calls : []
+          for (const callInfo of calls) {
+            await handleIncomingInfo(callInfo)
+          }
+        }
+      } catch (_) {}
+      if (!stop) tm = setTimeout(tick, 2000)
+    }
+
+    tick()
+    return () => {
+      stop = true
+      if (tm) clearTimeout(tm)
+    }
+  }, [user, audioReady, callState.active])
 
   // Pomocné: zajištění lokálního média
   async function ensureLocalMedia(kind='audio'){
