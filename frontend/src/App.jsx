@@ -17,7 +17,7 @@ function UserListItem({ user, isSelected, onSelect, unread = 0 }) {
         <div className="last">{user.online ? 'Online' : 'Offline'}</div>
       </div>
       {unread > 0 && (
-        <span style={{marginLeft:'auto',background:'#6366f1',color:'#fff',fontSize:'12px',minWidth:24,height:24,display:'flex',alignItems:'center',justifyContent:'center',borderRadius:12,fontWeight:600}}>{unread}</span>
+        <span className="unread-badge">{unread}</span>
       )}
     </li>
   )
@@ -76,10 +76,12 @@ function VoiceMessage({ src, own = false }) {
   // Zastaví ostatní přehrávače v rámci stránky
   useEffect(() => {
     const handler = (ev) => {
-      if (ev.detail && ev.detail !== audioRef.current) {
+      const player = audioRef.current
+      if (!player) return
+      if (ev.detail && ev.detail !== player) {
         // jiný přehrávač se spustil => pauza
-        if (!audioRef.current.paused) {
-          audioRef.current.pause()
+        if (!player.paused) {
+          player.pause()
           setPlaying(false)
         }
       }

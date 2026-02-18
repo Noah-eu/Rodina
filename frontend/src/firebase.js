@@ -12,13 +12,20 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 }
 
-export const app = initializeApp(firebaseConfig)
-export const db = getFirestore(app)
-export const storage = getStorage(app)
-export const auth = getAuth(app)
+const hasFirebaseConfig = Boolean(
+  firebaseConfig.apiKey &&
+  firebaseConfig.authDomain &&
+  firebaseConfig.projectId &&
+  firebaseConfig.appId
+)
+
+export const app = hasFirebaseConfig ? initializeApp(firebaseConfig) : null
+export const db = app ? getFirestore(app) : null
+export const storage = app ? getStorage(app) : null
+export const auth = app ? getAuth(app) : null
 
 // Funkce, která vrací promise, jež se resolvne po dokončení úvodní autentizace
-export const ensureAuth = new Promise(resolve => {
+export const ensureAuth = !auth ? Promise.resolve(null) : new Promise(resolve => {
   const unsubscribe = onAuthStateChanged(auth, user => {
     if (user) {
       console.log('Firebase auth state: signed in anonymously', user.uid)

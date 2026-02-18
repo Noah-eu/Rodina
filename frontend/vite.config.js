@@ -6,5 +6,10 @@ export default defineConfig({
   define: {
     'process.env': {},
     __BUILD_TIME__: JSON.stringify(Date.now()),
+  },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: './src/setupTests.js'
   }
 })
