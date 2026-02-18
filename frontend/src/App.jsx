@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react'
 import { db, ensureAuth, storage } from './firebase'
-import { collection, doc, getDoc, getDocs, query, where, setDoc, updateDoc, startAfter, limit } from 'firebase/firestore'
+import { collection, doc, getDoc, getDocs, query, where, setDoc, updateDoc, startAfter, limit, deleteDoc } from 'firebase/firestore'
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 import bcrypt from 'bcryptjs'
 import { onSnapshot, orderBy, addDoc, serverTimestamp } from 'firebase/firestore'
@@ -533,6 +533,7 @@ export default function App() {
   // Fronta pro události z SW, než se načte seznam uživatelů
   const pendingCallRef = useRef(null)
   const seenCallIdsRef = useRef(new Set())
+  const seenFirestoreCallIdsRef = useRef(new Set())
 
   // Po prvním gestu uživatele odemkni AudioContext a případně požádej o notifikační oprávnění
   useEffect(() => {
@@ -1114,6 +1115,57 @@ export default function App() {
     }
   }, [user, audioReady, callState.active])
 
+  // Firestore fallback pro příchozí hovory (nezávisle na backend push/realtime)
+  useEffect(() => {
+    if (!user || !db) return
+    const callsCol = collection(db, 'callSignals')
+    const qCalls = query(callsCol, where('to', '==', user.id), limit(30))
+    const unsub = onSnapshot(qCalls, (snap) => {
+      snap.docs.forEach(async (d) => {
+        const info = d.data() || {}
+        const callId = d.id
+        if (seenFirestoreCallIdsRef.current.has(callId)) return
+        const ts = Number(info.ts) || 0
+        if (ts && (Date.now() - ts > 60000)) {
+          try { await deleteDoc(d.ref) } catch (_) {}
+          return
+        }
+        seenFirestoreCallIdsRef.current.add(callId)
+
+        peerIdRef.current = info.from || null
+        callKindRef.current = info.kind || 'audio'
+        try {
+          const list = usersRef.current || []
+          const byId = info.from ? list.find(u => u.id === info.from) : null
+          const byName = !byId && info.fromName ? list.find(u => (u.name || '').toLowerCase() === (info.fromName || '').toLowerCase()) : null
+          const who = byId || byName
+          if (who) setSelectedUser(who)
+        } catch (_) {}
+
+        setCallState(cs => ({
+          ...cs,
+          incoming: true,
+          outgoing: false,
+          active: false,
+          connecting: false,
+          kind: info.kind || 'audio',
+          from: info.from || null,
+          to: info.to || user.id,
+          remoteName: info.fromName || ''
+        }))
+        if (audioReady) startRing()
+        showCallNotification({ from: info.from || '', fromName: info.fromName || '', kind: info.kind || 'audio', ts: ts || Date.now() })
+        clearIncomingTimeout()
+        incomingTimeoutRef.current = setTimeout(() => {
+          if (!callState.active) declineCall()
+        }, 45000)
+
+        try { await deleteDoc(d.ref) } catch (_) {}
+      })
+    })
+    return () => unsub()
+  }, [user, audioReady])
+
   // Pomocné: zajištění lokálního média
   async function ensureLocalMedia(kind='audio'){
     if (localStreamRef.current) return localStreamRef.current
@@ -1214,6 +1266,18 @@ export default function App() {
     setCallState({ active: false, incoming: false, outgoing: true, kind, from: user.id, to: selectedUser.id, connecting: true, remoteName: selectedUser.name })
     // Oznám příchozí hovor druhé straně (ring); offer se pošle až po explicitním accept
     try { await fetch(`${apiBaseRef.current}/call`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: user.id, to: selectedUser.id, kind, fromName: user.name }) }) } catch(_){}
+    // Firestore fallback, když backend/realtime nedoručí event
+    try {
+      if (db) {
+        await addDoc(collection(db, 'callSignals'), {
+          from: user.id,
+          to: selectedUser.id,
+          kind,
+          fromName: user.name,
+          ts: Date.now()
+        })
+      }
+    } catch(_){}
     try { await ensureLocalMedia(kind) } catch(_){}
 
     // Nastav timeout na nezdvihnutý odchozí hovor (bez odpovědi)
@@ -1330,7 +1394,14 @@ export default function App() {
           lastNotifiedRef.current[u.id] = msgId
           if (Notification && Notification.permission === 'granted') {
             try {
-              new Notification(`${d.name}: ${d.text || (d.imageUrl ? '🖼 Obrázek' : (d.audioUrl ? '🎙 Hlasová zpráva' : 'Nová zpráva'))}`, { body: 'Nová zpráva', icon: d.avatar || '/assets/default-avatar.png' })
+              const title = `${d.name}: ${d.text || (d.imageUrl ? '🖼 Obrázek' : (d.audioUrl ? '🎙 Hlasová zpráva' : 'Nová zpráva'))}`
+              const opts = { body: 'Nová zpráva', icon: d.avatar || '/assets/default-avatar.png' }
+              navigator.serviceWorker?.ready
+                ?.then((swReg) => {
+                  if (swReg && swReg.showNotification) return swReg.showNotification(title, opts)
+                  return Promise.resolve(new Notification(title, opts))
+                })
+                .catch(() => { try { new Notification(title, opts) } catch (_) {} })
               if (audioReady) playBeep()
               try { navigator.vibrate && navigator.vibrate([40, 30, 40]) } catch {}
             } catch(e) { /* ignore */ }
