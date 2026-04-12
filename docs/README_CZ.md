@@ -30,7 +30,7 @@ Tím se spustí backend a frontend (skriptem `concurrently`). Backend běží na
 
 - Frontend: upravujte `frontend/src/`.
 - Backend: upravujte `backend/src/`.
-- Pro audio/video hovory doporučujeme implementovat WebRTC a použít Socket.IO jako signaling server.
+- Audio/video hovory jsou implementovány pomocí WebRTC se Socket.IO (a volitelně Pusher) jako signaling serverem.
 
 ## Řešení build chyb
 

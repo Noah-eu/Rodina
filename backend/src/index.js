@@ -547,22 +547,28 @@ io.on('connection', (socket) => {
   });
   // WebRTC signaling proxy
   socket.on('webrtc_offer', (data)=>{
-    socket.broadcast.emit('webrtc_offer', data); broadcast('webrtc_offer', data)
+    socket.broadcast.emit('webrtc_offer', data)
+    if (pusher) pusher.trigger('famcall', 'webrtc_offer', data).catch(()=>{})
   })
   socket.on('webrtc_answer', (data)=>{
-    socket.broadcast.emit('webrtc_answer', data); broadcast('webrtc_answer', data)
+    socket.broadcast.emit('webrtc_answer', data)
+    if (pusher) pusher.trigger('famcall', 'webrtc_answer', data).catch(()=>{})
   })
   socket.on('webrtc_ice', (data)=>{
-    socket.broadcast.emit('webrtc_ice', data); broadcast('webrtc_ice', data)
+    socket.broadcast.emit('webrtc_ice', data)
+    if (pusher) pusher.trigger('famcall', 'webrtc_ice', data).catch(()=>{})
   })
   socket.on('webrtc_accept', (data)=>{
-    socket.broadcast.emit('webrtc_accept', data); broadcast('webrtc_accept', data)
+    socket.broadcast.emit('webrtc_accept', data)
+    if (pusher) pusher.trigger('famcall', 'webrtc_accept', data).catch(()=>{})
   })
   socket.on('webrtc_decline', (data)=>{
-    socket.broadcast.emit('webrtc_decline', data); broadcast('webrtc_decline', data)
+    socket.broadcast.emit('webrtc_decline', data)
+    if (pusher) pusher.trigger('famcall', 'webrtc_decline', data).catch(()=>{})
   })
   socket.on('webrtc_hangup', (data)=>{
-    socket.broadcast.emit('webrtc_hangup', data); broadcast('webrtc_hangup', data)
+    socket.broadcast.emit('webrtc_hangup', data)
+    if (pusher) pusher.trigger('famcall', 'webrtc_hangup', data).catch(()=>{})
   })
 });
 

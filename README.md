@@ -4,9 +4,10 @@ Kompletní jednoduchá rodinná komunikační aplikace (MVP) — přihlášení 
 
 Struktura projektu:
 
-- `frontend/` — React + Vite aplikace (UI, chat, přihlášení)
-- `backend/` — Express server s Socket.IO (API, real-time)
-- `assets/` — zvuky a ikony
+- `frontend/` — React + Vite aplikace (UI, chat, přihlášení, WebRTC volání)
+- `backend/` — Express server s Socket.IO (API, real-time signaling, Web Push)
+- `frontend/public/assets/` — zvuky (ringtone.mp3) a ikony (default-avatar.png)
+- `frontend/public/icons/` — PWA ikony (192×192, 512×512)
 - `tests/` — základní testy
 - `docs/` — dokumentace v češtině
 

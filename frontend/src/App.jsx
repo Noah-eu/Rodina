@@ -551,6 +551,8 @@ export default function App() {
   const apiBasesRef = useRef([])
   // Diagnostika
   const [diag, setDiag] = useState({ pusher: 'off', sw: 'off', pushPerm: 'default', pushSub: false, iceCount: 0, apiBase: '' })
+  // Ref pro sledování aktivního hovoru bez stale closure v timeoutech
+  const callActiveRef = useRef(false)
   // Aktuální typ hovoru (audio/video) mimo React state, aby se předešlo stale closures
   const callKindRef = useRef('audio')
   // Fronta pro události z SW, než se načte seznam uživatelů
@@ -822,7 +824,7 @@ export default function App() {
             // Timeout pro nezvednutý příchozí hovor (45s)
             clearIncomingTimeout()
             incomingTimeoutRef.current = setTimeout(() => {
-              if (!callState.active) {
+              if (!callActiveRef.current) {
                 declineCall()
               }
             }, 45000)
@@ -853,7 +855,7 @@ export default function App() {
         setCallState(cs => ({ ...cs, incoming: true, outgoing: false, active: false, connecting: false, kind: d.kind || 'audio', from: d.from, to: (user&&user.id)||null, remoteName: d.fromName || '' }))
         if (audioReady) startRing()
         clearIncomingTimeout()
-        incomingTimeoutRef.current = setTimeout(() => { if (!callState.active) { declineCall() } }, 45000)
+        incomingTimeoutRef.current = setTimeout(() => { if (!callActiveRef.current) { declineCall() } }, 45000)
       }
     }
     window.addEventListener('message', onMsg)
@@ -904,7 +906,7 @@ export default function App() {
         setCallState(cs => ({ ...cs, incoming: true, outgoing: false, active: false, connecting: false, kind: d.kind || 'audio', from: d.from, to: (user&&user.id)||null, remoteName: d.fromName || '' }))
         if (audioReady) startRing()
         clearIncomingTimeout()
-        incomingTimeoutRef.current = setTimeout(() => { if (!callState.active) declineCall() }, 45000)
+        incomingTimeoutRef.current = setTimeout(() => { if (!callActiveRef.current) declineCall() }, 45000)
       }
     } else if (pending.type === 'action') {
       const { action, data } = pending
@@ -984,6 +986,13 @@ export default function App() {
         if (!info || info.to !== user.id) return
         // Zahodit staré příchozí hovory starší než 60s
         if (info.ts && (Date.now() - info.ts > 60000)) return
+        // Deduplikace: každý hovor zpracuj jen jednou (stejné ID může přijít z Pusheru i Socket.IO)
+        if (info.id) {
+          if (seenCallIdsRef.current.has(info.id)) return
+          seenCallIdsRef.current.add(info.id)
+          // Označit hovor jako doručený, aby se nepřehrával v polling fallbacku
+          postApi('/call/consume', { id: info.id, userId: user.id }).catch(() => {})
+        }
         peerIdRef.current = info.from
         callKindRef.current = info.kind || 'audio'
         // Auto-select volajícího kontaktu (pokud existuje v seznamu)
@@ -1011,7 +1020,7 @@ export default function App() {
         // Timeout pro nezvednutý příchozí hovor (45s)
         clearIncomingTimeout()
         incomingTimeoutRef.current = setTimeout(() => {
-          if (!callState.active) {
+          if (!callActiveRef.current) {
             declineCall()
           }
         }, 45000)
@@ -1171,7 +1180,7 @@ export default function App() {
       showCallNotification({ from: info.from, fromName: info.fromName || '', kind: info.kind || 'audio', ts: info.ts || Date.now() })
       clearIncomingTimeout()
       incomingTimeoutRef.current = setTimeout(() => {
-        if (!callState.active) declineCall()
+        if (!callActiveRef.current) declineCall()
       }, 45000)
     }
 
@@ -1238,7 +1247,7 @@ export default function App() {
         showCallNotification({ from: info.from || '', fromName: info.fromName || '', kind: info.kind || 'audio', ts: ts || Date.now() })
         clearIncomingTimeout()
         incomingTimeoutRef.current = setTimeout(() => {
-          if (!callState.active) declineCall()
+          if (!callActiveRef.current) declineCall()
         }, 45000)
 
         try { await deleteDoc(d.ref) } catch (_) {}
@@ -1328,8 +1337,8 @@ export default function App() {
         const tv = pc.addTransceiver('video', { direction: 'sendrecv' })
         if (vTrack) { try { await tv.sender.replaceTrack(vTrack) } catch { try { pc.addTrack(vTrack, local) } catch {} } }
       } else {
-        if (aTrack) { try { pc.addTrack(aTrack, local) } catch{}_ }
-        if (vTrack) { try { pc.addTrack(vTrack, local) } catch{}_ }
+        if (aTrack) { try { pc.addTrack(aTrack, local) } catch(_){} }
+        if (vTrack) { try { pc.addTrack(vTrack, local) } catch(_){} }
       }
       return pc
     } finally {
@@ -1361,8 +1370,8 @@ export default function App() {
     // Nastav timeout na nezdvihnutý odchozí hovor (bez odpovědi)
     clearTimeout(incomingTimeoutRef.current)
     incomingTimeoutRef.current = setTimeout(() => {
-      // Pokud se hovor během 45s nerozeběhne, ukonči zvonění a hovor
-      if (!pcRef.current || !peerIdRef.current) {
+      // Pokud se hovor během 45s nerozeběhne (callee neodpověděl), ukonči zvonění a hovor
+      if (!callActiveRef.current) {
         stopRing()
         endCall()
       }
@@ -1499,6 +1508,7 @@ export default function App() {
   // Udržuj referenci na aktuálně vybraného uživatele pro notifikační callbacky
   useEffect(() => { selectedUserRef.current = selectedUser }, [selectedUser])
   useEffect(() => { usersRef.current = users }, [users])
+  useEffect(() => { callActiveRef.current = callState.active }, [callState.active])
 
 
   const handleAuth = (authedUser) => {
