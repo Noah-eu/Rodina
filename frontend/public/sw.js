@@ -36,13 +36,17 @@ self.addEventListener('push', function(event) {
     data
   }
   event.waitUntil((async () => {
-    const n = await self.registration.showNotification(title, opts)
-    // Experimentální: zkusit otevřít okno s appkou pro rychlé přijetí (některé prohlížeče blokují bez interakce)
+    await self.registration.showNotification(title, opts)
     try {
       if (data.type === 'call') {
         const all = await clients.matchAll({ type: 'window', includeUncontrolled: true })
-        const hasVisible = all && all.length
-        if (!hasVisible) {
+        if (all && all.length) {
+          // Aplikace je otevřená — pošli ji zprávu, ať zobrazí příchozí hovor
+          for (const win of all) {
+            try { win.postMessage({ type: 'sw:incomingCall', data }) } catch(_) {}
+          }
+        } else {
+          // Aplikace není otevřená — otevři ji s parametry v URL
           const params = new URLSearchParams()
           params.set('notify', '1')
           params.set('ntype', data.type)
@@ -83,6 +87,10 @@ self.addEventListener('notificationclick', function(event){
       if (d.fromName) params.set('fromName', d.fromName)
       if (d.kind) params.set('kind', d.kind)
       if (d.ts) params.set('ts', String(d.ts))
+      // Předej akci (accept/decline) v URL, aby ji aplikace mohla zpracovat po otevření
+      if (event.action === 'accept' || event.action === 'decline') {
+        params.set('action', event.action)
+      }
       const url = '/?' + params.toString()
       await clients.openWindow(url)
     }

@@ -559,6 +559,8 @@ export default function App() {
   const pendingCallRef = useRef(null)
   const seenCallIdsRef = useRef(new Set())
   const seenFirestoreCallIdsRef = useRef(new Set())
+  // Fronta ICE kandidátů přijatých před setRemoteDescription
+  const iceCandidateQueueRef = useRef([])
 
   const getApiBaseCandidates = () => {
     const envBase = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '')
@@ -621,6 +623,24 @@ export default function App() {
       }
     }
     throw lastErr || new Error('API request failed')
+  }
+
+  // Signalizace: pošli přes REST a zároveň přes Socket.IO (jako záloha)
+  const signalEvent = async (event, payload) => {
+    // Pošli přes Socket.IO přímo (nejrychlejší, funguje lokálně i přes proxy)
+    try {
+      const sock = socketRef.current
+      if (sock && sock.connected) sock.emit(event, payload)
+    } catch (_) {}
+    // Pošli přes REST API (potřebné pro Pusher broadcast a produkci)
+    const pathMap = {
+      webrtc_offer: '/rt/offer', webrtc_answer: '/rt/answer', webrtc_ice: '/rt/ice',
+      webrtc_accept: '/rt/accept', webrtc_decline: '/rt/decline', webrtc_hangup: '/rt/hangup'
+    }
+    const path = pathMap[event]
+    if (path) {
+      try { await postApi(path, payload) } catch (_) {}
+    }
   }
 
   // Po prvním gestu uživatele odemkni AudioContext a případně požádej o notifikační oprávnění
@@ -801,8 +821,9 @@ export default function App() {
         const from = url.searchParams.get('from') || ''
         const fromName = url.searchParams.get('fromName') || ''
         const kind = url.searchParams.get('kind') || 'audio'
-  const tsStr = url.searchParams.get('ts') || ''
-  const auto = url.searchParams.get('autopopup') === '1'
+        const tsStr = url.searchParams.get('ts') || ''
+        const auto = url.searchParams.get('autopopup') === '1'
+        const action = url.searchParams.get('action') || ''
         const ts = tsStr ? parseInt(tsStr, 10) : 0
         // Stará notifikace (starší než 60s) se ignoruje
         if (ts && (Date.now() - ts > 60000)) return
@@ -817,9 +838,11 @@ export default function App() {
             callKindRef.current = kind || 'audio'
             setCallState(cs => ({ ...cs, incoming: true, outgoing: false, active: false, connecting: false, kind, from: from || null, to: (user&&user.id)||null, remoteName: fromName || (person && person.name) || '' }))
             if (audioReady) startRing()
-            // Při autopopupu ukážeme overlay a necháme uživatele přijmout rovnou
-            if (auto && !audioReady) {
-              // nic – počkáme na uživatelské gesto
+            // Pokud notifikace obsahuje akci (accept/decline z tlačítka), aplikuj ji
+            if (action === 'accept') {
+              setTimeout(() => acceptCall(), 100)
+            } else if (action === 'decline') {
+              setTimeout(() => declineCall(), 100)
             }
             // Timeout pro nezvednutý příchozí hovor (45s)
             clearIncomingTimeout()
@@ -830,12 +853,26 @@ export default function App() {
             }, 45000)
           }
           apply()
-          // Vyčistíme parametry z URL (nebo to necháme být)
-          try { url.searchParams.delete('notify'); window.history.replaceState({}, '', url.pathname + url.search) } catch(_){}
+          // Vyčistíme parametry z URL
+          try { url.searchParams.delete('notify'); url.searchParams.delete('action'); window.history.replaceState({}, '', url.pathname + (url.search || '')) } catch(_){}
         }
       }
     }catch(_){ }
   }, [users, audioReady, user])
+
+  // Příchozí hovor předaný ze SW přes postMessage (push dorazil, aplikace byla otevřená)
+  useEffect(() => {
+    function onSwCall(ev) {
+      if (!ev || !ev.data || ev.data.type !== 'sw:incomingCall') return
+      const d = ev.data.data || {}
+      if (!d.from) return
+      // Tato zpráva dorazí pouze pokud push přišel a aplikace je otevřená;
+      // realtime Socket.IO handler ji pravděpodobně již zpracoval — deduplikuj
+      if (d.ts && (Date.now() - Number(d.ts) > 60000)) return
+    }
+    window.addEventListener('message', onSwCall)
+    return () => window.removeEventListener('message', onSwCall)
+  }, [])
 
   // Reakce na kliknutí notifikace ze SW (sw:notifyClick)
   useEffect(() => {
@@ -1027,23 +1064,34 @@ export default function App() {
       }
       const onOffer = async (data) => {
         if (!data || data.to !== user.id) return
-        // Zpracuj offer bez závislosti na starém callState v closure
         peerIdRef.current = data.from
         callKindRef.current = data.kind || callKindRef.current || 'audio'
-        await ensureLocalMedia(data.kind || 'audio')
-        await ensurePeerConnection(data.kind || 'audio')
-        try { await pcRef.current.setRemoteDescription(data.sdp) } catch(_){}
         try {
+          await ensureLocalMedia(data.kind || 'audio')
+          await ensurePeerConnection(data.kind || 'audio')
+          await pcRef.current.setRemoteDescription(data.sdp)
+          // Vyprázdni frontu ICE kandidátů nahromaděných před setRemoteDescription
+          for (const c of iceCandidateQueueRef.current) {
+            try { await pcRef.current.addIceCandidate(c) } catch(_){}
+          }
+          iceCandidateQueueRef.current = []
           const answer = await pcRef.current.createAnswer()
           await pcRef.current.setLocalDescription(answer)
-          await postApi('/rt/answer', { from: user.id, to: data.from, sdp: pcRef.current.localDescription, kind: data.kind || 'audio' })
+          await signalEvent('webrtc_answer', { from: user.id, to: data.from, sdp: pcRef.current.localDescription, kind: data.kind || 'audio' })
           stopRing()
-          setCallState(cs => ({ ...cs, active: true, incoming: false, outgoing: false, connecting: true }))
-        } catch (e) {}
+          setCallState(cs => ({ ...cs, active: true, incoming: false, outgoing: false, connecting: false }))
+        } catch (_) {}
       }
       const onAnswer = async (data) => {
         if (!data || data.to !== user.id) return
-        try { await pcRef.current?.setRemoteDescription(data.sdp) } catch(_){}
+        try {
+          await pcRef.current?.setRemoteDescription(data.sdp)
+          // Vyprázdni frontu ICE kandidátů
+          for (const c of iceCandidateQueueRef.current) {
+            try { await pcRef.current.addIceCandidate(c) } catch(_){}
+          }
+          iceCandidateQueueRef.current = []
+        } catch(_){}
         stopRing()
         clearIncomingTimeout()
         setCallState(cs => ({ ...cs, connecting: false, active: true }))
@@ -1053,18 +1101,25 @@ export default function App() {
         // Candidate může přijít oběma směrům; filtruj na aktuálního peerId
         const peer = peerIdRef.current
         if (data.from && peer && data.from !== peer) return
-        try { await pcRef.current?.addIceCandidate(data.candidate) } catch(_){}
+        const pc = pcRef.current
+        if (!pc) return
+        // Pokud PC ještě nemá remote description, zařaď kandidáta do fronty
+        if (!pc.remoteDescription || !pc.remoteDescription.type) {
+          if (data.candidate) iceCandidateQueueRef.current.push(data.candidate)
+          return
+        }
+        try { await pc.addIceCandidate(data.candidate) } catch(_){}
       }
 
       const onAccept = async (data) => {
         if (!data || data.to !== user.id) return
         // Callee přijal — volající teď může poslat offer
         try {
-          const k = callKindRef.current || callState.kind || 'audio'
+          const k = callKindRef.current || 'audio'
           await ensurePeerConnection(k)
           const offer = await pcRef.current.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: k==='video' })
           await pcRef.current.setLocalDescription(offer)
-          await postApi('/rt/offer', { from: user.id, to: peerIdRef.current, sdp: pcRef.current.localDescription, kind: k })
+          await signalEvent('webrtc_offer', { from: user.id, to: peerIdRef.current, sdp: pcRef.current.localDescription, kind: k })
         } catch (_) {}
       }
 
@@ -1322,9 +1377,7 @@ export default function App() {
       }
       pc.onicecandidate = async (e) => {
         if (e.candidate && peerIdRef.current) {
-          try {
-            await postApi('/rt/ice', { from: user.id, to: peerIdRef.current, candidate: e.candidate })
-          } catch(_){ }
+          await signalEvent('webrtc_ice', { from: user.id, to: peerIdRef.current, candidate: e.candidate })
         }
       }
       // Připoj lokální média
@@ -1381,9 +1434,10 @@ export default function App() {
   async function endCall(){
     // pošli hangup peerovi
     if (peerIdRef.current) {
-      try { await postApi('/rt/hangup', { from: user.id, to: peerIdRef.current }) } catch(_){ }
+      await signalEvent('webrtc_hangup', { from: user.id, to: peerIdRef.current })
     }
     stopRing()
+    iceCandidateQueueRef.current = []
     try { pcRef.current?.getSenders?.().forEach(s => { try { s.track && s.track.stop() } catch(_){} }) } catch(_){ }
     try { localStreamRef.current?.getTracks?.().forEach(t => t.stop()) } catch(_){ }
     try { pcRef.current?.close() } catch(_){ }
@@ -1398,24 +1452,30 @@ export default function App() {
 
   async function acceptCall(){
     setCallState(cs => ({ ...cs, incoming: false, connecting: true }))
+    // Vyčisti ICE frontu pro nové spojení
+    iceCandidateQueueRef.current = []
     try {
       const k = callKindRef.current || callState.kind || 'audio'
       await ensureLocalMedia(k)
-      await ensurePeerConnection(k)
+      // Nepřidávej tracky do PC hned — přidáme je až v onOffer, aby nedošlo k neúplnému SDP
       // signalizuj protistraně, že může poslat offer
       if (peerIdRef.current) {
-        await postApi('/rt/accept', { from: user.id, to: peerIdRef.current })
+        await signalEvent('webrtc_accept', { from: user.id, to: peerIdRef.current })
       }
       stopRing()
       clearIncomingTimeout()
-    } catch(_){}
+    } catch(e){
+      // Pokud média selžou, informuj uživatele a zrušit přijetí
+      console.error('acceptCall failed', e)
+      setCallState(cs => ({ ...cs, incoming: true, connecting: false }))
+    }
   }
 
   function declineCall(){
     // pošli decline a ukonči
     const peer = peerIdRef.current
     if (peer) {
-      postApi('/rt/decline', { from: user.id, to: peer }).catch(()=>{})
+      signalEvent('webrtc_decline', { from: user.id, to: peer }).catch(()=>{})
     }
     stopRing()
     endCall()
