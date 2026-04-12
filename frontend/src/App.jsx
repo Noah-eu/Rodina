@@ -562,6 +562,13 @@ export default function App() {
   const seenFirestoreCallIdsRef = useRef(new Set())
   // Fronta ICE kandidátů přijatých před setRemoteDescription
   const iceCandidateQueueRef = useRef([])
+  // Refs na WebRTC signalizační handlery pro Firestore fallback
+  const onOfferRef = useRef(null)
+  const onAnswerRef = useRef(null)
+  const onIceRef = useRef(null)
+  const onAcceptRef = useRef(null)
+  const onDeclineRef = useRef(null)
+  const onHangupRef = useRef(null)
 
   const getApiBaseCandidates = () => {
     const envBase = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '')
@@ -626,14 +633,16 @@ export default function App() {
     throw lastErr || new Error('API request failed')
   }
 
-  // Signalizace: Socket.IO (přímé, cílené) s REST fallbackem
+  // Signalizace: Socket.IO + REST (Pusher) + Firestore fallback
+  // Tři nezávislé kanály — alespoň jeden vždy doručí zprávu
   const signalEvent = async (event, payload) => {
-    const sock = socketRef.current
-    if (sock && sock.connected) {
-      // Socket.IO: okamžité, cílené — server pošle jen příjemci
-      try { sock.emit(event, payload); return } catch (_) {}
-    }
-    // REST fallback (když Socket.IO není připojeno)
+    // 1) Socket.IO: přímé okamžité doručení (funguje lokálně nebo při přímém WS)
+    try {
+      const sock = socketRef.current
+      if (sock && sock.connected) sock.emit(event, payload)
+    } catch (_) {}
+
+    // 2) REST: backend přeposílá příjemci přes Socket.IO cíleně a/nebo Pusher
     const pathMap = {
       webrtc_offer: '/rt/offer', webrtc_answer: '/rt/answer', webrtc_ice: '/rt/ice',
       webrtc_accept: '/rt/accept', webrtc_decline: '/rt/decline', webrtc_hangup: '/rt/hangup'
@@ -641,6 +650,14 @@ export default function App() {
     const path = pathMap[event]
     if (path) {
       try { await postApi(path, payload) } catch (_) {}
+    }
+
+    // 3) Firestore fallback: funguje vždy bez závislosti na backendu/Pusher/Socket.IO
+    if (db && payload && payload.to) {
+      try {
+        const sigRef = collection(db, 'rtcSignals', payload.to, 'inbox')
+        await addDoc(sigRef, { event, payload, ts: Date.now() })
+      } catch (_) {}
     }
   }
 
@@ -1140,6 +1157,14 @@ export default function App() {
         endCall()
       }
 
+      // Ulož handlery do refs pro Firestore fallback kanál
+      onOfferRef.current = onOffer
+      onAnswerRef.current = onAnswer
+      onIceRef.current = onIce
+      onAcceptRef.current = onAccept
+      onDeclineRef.current = onDecline
+      onHangupRef.current = onHangup
+
       if (ch) {
         ch.bind('incoming_call', onIncoming)
         ch.bind('webrtc_offer', onOffer)
@@ -1150,23 +1175,23 @@ export default function App() {
         ch.bind('webrtc_hangup', onHangup)
       }
 
-      // Fallback realtime přes Socket.IO (funguje i bez Pusher env)
-      const socketBase = (import.meta.env.VITE_API_URL || (import.meta.env.PROD ? window.location.origin : 'http://localhost:3001')).replace(/\/$/, '')
-      const socket = ioClient(socketBase, {
-        transports: ['websocket', 'polling'],
-        timeout: 10000
-      })
-      socketRef.current = socket
-      socket.on('connect', () => {
-        try { socket.emit('registerSocket', user.id) } catch (_){ }
-      })
-      socket.on('incoming_call', onIncoming)
-      socket.on('webrtc_offer', onOffer)
-      socket.on('webrtc_answer', onAnswer)
-      socket.on('webrtc_ice', onIce)
-      socket.on('webrtc_accept', onAccept)
-      socket.on('webrtc_decline', onDecline)
-      socket.on('webrtc_hangup', onHangup)
+      // Socket.IO: připoj se přímo na backend (nikdy přes Netlify proxy — ta nepodporuje WS)
+      const socketBase = (import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:3001')).replace(/\/$/, '')
+      const socket = socketBase
+        ? ioClient(socketBase, { transports: ['websocket', 'polling'], timeout: 10000 })
+        : null
+      if (socket) {
+        socket.on('connect', () => {
+          try { socket.emit('registerSocket', user.id) } catch (_){ }
+        })
+        socket.on('incoming_call', onIncoming)
+        socket.on('webrtc_offer', onOffer)
+        socket.on('webrtc_answer', onAnswer)
+        socket.on('webrtc_ice', onIce)
+        socket.on('webrtc_accept', onAccept)
+        socket.on('webrtc_decline', onDecline)
+        socket.on('webrtc_hangup', onHangup)
+      }
 
       return () => {
         try {
@@ -1196,6 +1221,36 @@ export default function App() {
         } catch(_){}
       }
     } catch (_) {}
+  }, [user])
+
+  // Firestore signalizační kanál: naslouchá na rtcSignals/{userId}/inbox
+  // Záloha pro produkci bez Pusheru a bez přímého Socket.IO (Netlify → Render)
+  useEffect(() => {
+    if (!user || !db) return
+    const seenSigIds = new Set()
+    const sigRef = collection(db, 'rtcSignals', user.id, 'inbox')
+    const unsub = onSnapshot(sigRef, snap => {
+      snap.docChanges().forEach(async change => {
+        if (change.type !== 'added') return
+        const d = change.doc
+        const { event, payload, ts } = d.data() || {}
+        // Ignoruj staré zprávy (>30s) a duplicity
+        if (ts && Date.now() - ts > 30000) { try { await deleteDoc(d.ref) } catch(_){} ; return }
+        if (seenSigIds.has(d.id)) return
+        seenSigIds.add(d.id)
+        // Smaž zprávu po přečtení
+        try { await deleteDoc(d.ref) } catch(_){}
+        if (!event || !payload) return
+        // Zpracuj podle typu události
+        if (event === 'webrtc_offer') onOfferRef.current && onOfferRef.current(payload)
+        else if (event === 'webrtc_answer') onAnswerRef.current && onAnswerRef.current(payload)
+        else if (event === 'webrtc_ice') onIceRef.current && onIceRef.current(payload)
+        else if (event === 'webrtc_accept') onAcceptRef.current && onAcceptRef.current(payload)
+        else if (event === 'webrtc_decline') onDeclineRef.current && onDeclineRef.current(payload)
+        else if (event === 'webrtc_hangup') onHangupRef.current && onHangupRef.current(payload)
+      })
+    })
+    return () => unsub()
   }, [user])
 
   // Polling fallback pro příchozí hovory (funguje i bez realtime spojení)

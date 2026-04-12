@@ -93,13 +93,16 @@ function broadcast(event, payload){
 function signalTo(event, payload){
   const to = payload && payload.to;
   if (to && userSockets.has(to)) {
+    // Příjemce má přímé Socket.IO spojení — pošli jen jemu
     try { userSockets.get(to).emit(event, payload); } catch(e) {}
-  } else {
-    // Fallback: broadcast (pro případ, že příjemce není registrovaný)
-    try { io.emit(event, payload); } catch(e) {}
   }
+  // Pusher vždy: pokryje případ, kdy příjemce nemá Socket.IO (např. Netlify → Render přes WS nefunguje)
   if (pusher) {
     pusher.trigger('famcall', event, payload).catch(()=>{})
+  }
+  // Pokud není ani Socket.IO ani Pusher, použij broadcast jako poslední zálohu
+  if (!userSockets.has(to) && !pusher) {
+    try { io.emit(event, payload); } catch(e) {}
   }
 }
 
