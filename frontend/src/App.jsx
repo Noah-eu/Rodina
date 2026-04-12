@@ -1495,16 +1495,50 @@ export default function App() {
     return () => { try { clearTimeout(incomingTimeoutRef.current) } catch{} }
   }, [])
 
+  // Heartbeat: každých 25s zapiš lastSeen do Firestore; při unmountu nastav online:false
+  useEffect(() => {
+    if (!user || !db) return
+    const TIMEOUT_MS = 45000 // uživatel je "offline" pokud nepsal >45s
+    const beat = async () => {
+      try {
+        await updateDoc(doc(db, 'users', user.id), { online: true, lastSeen: Date.now() })
+      } catch(_) {}
+    }
+    const goOffline = async () => {
+      try {
+        await updateDoc(doc(db, 'users', user.id), { online: false, lastSeen: Date.now() })
+      } catch(_) {}
+    }
+    beat()
+    const timer = setInterval(beat, 25000)
+    // Při zavření stránky označ uživatele jako offline
+    const onUnload = () => { goOffline() }
+    window.addEventListener('beforeunload', onUnload)
+    return () => {
+      clearInterval(timer)
+      window.removeEventListener('beforeunload', onUnload)
+      goOffline()
+    }
+  }, [user])
+
   // Načítání seznamu ostatních uživatelů + unread listeners
   useEffect(() => {
     if (!user) return
     let unsubList = []
+    const ONLINE_THRESHOLD_MS = 45000
     const fetchUsers = async () => {
       await ensureAuth
       const usersCol = collection(db, 'users')
       const qUsers = query(usersCol, where('id', '!=', user.id))
       const snap = await getDocs(qUsers)
-      const userList = snap.docs.map(d => d.data())
+      const now = Date.now()
+      const userList = snap.docs.map(d => {
+        const data = d.data()
+        // Považuj uživatele za online jen pokud měl heartbeat v posledních 45s
+        const lastSeen = Number(data.lastSeen) || 0
+        const isOnline = lastSeen > 0 ? (now - lastSeen < ONLINE_THRESHOLD_MS) : Boolean(data.online)
+        return { ...data, online: isOnline }
+      })
       setUsers(userList)
 
       // Zrušíme předchozí listenery
@@ -1567,10 +1601,38 @@ export default function App() {
       })
     }
     fetchUsers().catch(console.error)
+    // Obnovuj seznam každých 20s (záloha pro případ, že snapshot selže)
     const interval = setInterval(fetchUsers, 20000)
+
+    // Real-time poslouchej změny presence (lastSeen / online) na všech uživatelích
+    let presenceUnsubs = []
+    const subscribePresence = async () => {
+      try {
+        await ensureAuth
+        const usersCol = collection(db, 'users')
+        const qAll = query(usersCol, where('id', '!=', user.id))
+        const unsubPresence = onSnapshot(qAll, snap => {
+          const now = Date.now()
+          setUsers(prev => {
+            // Aktualizuj online stav podle nejnovějšího lastSeen ze snapshotu
+            const updated = new Map(snap.docs.map(d => {
+              const data = d.data()
+              const lastSeen = Number(data.lastSeen) || 0
+              const isOnline = lastSeen > 0 ? (now - lastSeen < ONLINE_THRESHOLD_MS) : Boolean(data.online)
+              return [data.id, { ...data, online: isOnline }]
+            }))
+            return prev.map(u => updated.has(u.id) ? updated.get(u.id) : u)
+          })
+        })
+        presenceUnsubs.push(unsubPresence)
+      } catch(_) {}
+    }
+    subscribePresence()
+
     return () => {
       clearInterval(interval)
       unsubList.forEach(fn => fn())
+      presenceUnsubs.forEach(fn => fn())
     }
   }, [user])
 
@@ -1611,6 +1673,10 @@ export default function App() {
   }, [user])
 
   const handleLogout = () => {
+    // Okamžitě nastav offline v Firestore
+    if (user && db) {
+      try { updateDoc(doc(db, 'users', user.id), { online: false, lastSeen: Date.now() }).catch(()=>{}) } catch(_){}
+    }
     localStorage.removeItem('rodina:user')
     localStorage.removeItem('rodina:lastUserId')
     localStorage.removeItem('rodina:lastName')
