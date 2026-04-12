@@ -77,10 +77,27 @@ const pusher = pusherEnabled ? new Pusher({
   useTLS: true
 }) : null;
 
+// Mapa userId → socket pro cílenou signalizaci
+const userSockets = new Map();
+
 function broadcast(event, payload){
   // Socket.IO (lokální dev)
   try{ io.emit(event, payload); }catch(e){}
   // Pusher (produkce)
+  if (pusher) {
+    pusher.trigger('famcall', event, payload).catch(()=>{})
+  }
+}
+
+// Cílená signalizace: pošli zprávu jen příjemci (podle pole `to`)
+function signalTo(event, payload){
+  const to = payload && payload.to;
+  if (to && userSockets.has(to)) {
+    try { userSockets.get(to).emit(event, payload); } catch(e) {}
+  } else {
+    // Fallback: broadcast (pro případ, že příjemce není registrovaný)
+    try { io.emit(event, payload); } catch(e) {}
+  }
   if (pusher) {
     pusher.trigger('famcall', event, payload).catch(()=>{})
   }
@@ -346,13 +363,13 @@ app.get('/api/ice', async (req, res) => {
   }
 });
 
-// Signaling REST endpoints (for Pusher triggers from clients)
-app.post('/api/rt/offer', (req, res)=>{ const payload = req.body || {}; broadcast('webrtc_offer', payload); res.json({ ok: true }) })
-app.post('/api/rt/answer', (req, res)=>{ const payload = req.body || {}; broadcast('webrtc_answer', payload); res.json({ ok: true }) })
-app.post('/api/rt/ice', (req, res)=>{ const payload = req.body || {}; broadcast('webrtc_ice', payload); res.json({ ok: true }) })
-app.post('/api/rt/accept', (req, res)=>{ const payload = req.body || {}; broadcast('webrtc_accept', payload); res.json({ ok: true }) })
-app.post('/api/rt/decline', (req, res)=>{ const payload = req.body || {}; broadcast('webrtc_decline', payload); res.json({ ok: true }) })
-app.post('/api/rt/hangup', (req, res)=>{ const payload = req.body || {}; broadcast('webrtc_hangup', payload); res.json({ ok: true }) })
+// Signaling REST endpoints — cílená signalizace jen příjemci (pole `to`)
+app.post('/api/rt/offer', (req, res)=>{ const payload = req.body || {}; signalTo('webrtc_offer', payload); res.json({ ok: true }) })
+app.post('/api/rt/answer', (req, res)=>{ const payload = req.body || {}; signalTo('webrtc_answer', payload); res.json({ ok: true }) })
+app.post('/api/rt/ice', (req, res)=>{ const payload = req.body || {}; signalTo('webrtc_ice', payload); res.json({ ok: true }) })
+app.post('/api/rt/accept', (req, res)=>{ const payload = req.body || {}; signalTo('webrtc_accept', payload); res.json({ ok: true }) })
+app.post('/api/rt/decline', (req, res)=>{ const payload = req.body || {}; signalTo('webrtc_decline', payload); res.json({ ok: true }) })
+app.post('/api/rt/hangup', (req, res)=>{ const payload = req.body || {}; signalTo('webrtc_hangup', payload); res.json({ ok: true }) })
 app.post('/api/rt/typing', (req, res)=>{ const payload = req.body || {}; broadcast('typing', payload); res.json({ ok: true }) })
 app.post('/api/rt/delivered', (req, res)=>{ const payload = req.body || {}; broadcast('delivered', payload); res.json({ ok: true }) })
 app.post('/api/call', async (req, res)=>{
@@ -521,23 +538,27 @@ app.post('/api/push/notify', async (req, res) => {
 io.on('connection', (socket) => {
   socket.on('registerSocket', (userId) => {
     socket.userId = userId;
+    userSockets.set(userId, socket);
     readDB();
     const user = dbData.users.find(u => u.id === userId);
     if (user) {
       user.online = true;
       writeDB();
-  broadcast('presence', { id: user.id, online: true });
+      broadcast('presence', { id: user.id, online: true });
     }
   });
 
   socket.on('disconnect', () => {
     if (socket.userId) {
+      if (userSockets.get(socket.userId) === socket) {
+        userSockets.delete(socket.userId);
+      }
       readDB();
       const user = dbData.users.find(u => u.id === socket.userId);
       if (user) {
         user.online = false;
         writeDB();
-  broadcast('presence', { id: user.id, online: false });
+        broadcast('presence', { id: user.id, online: false });
       }
     }
   });
@@ -545,31 +566,14 @@ io.on('connection', (socket) => {
   socket.on('call', (callInfo) => {
     broadcast('incoming_call', callInfo);
   });
-  // WebRTC signaling proxy
-  socket.on('webrtc_offer', (data)=>{
-    socket.broadcast.emit('webrtc_offer', data)
-    if (pusher) pusher.trigger('famcall', 'webrtc_offer', data).catch(()=>{})
-  })
-  socket.on('webrtc_answer', (data)=>{
-    socket.broadcast.emit('webrtc_answer', data)
-    if (pusher) pusher.trigger('famcall', 'webrtc_answer', data).catch(()=>{})
-  })
-  socket.on('webrtc_ice', (data)=>{
-    socket.broadcast.emit('webrtc_ice', data)
-    if (pusher) pusher.trigger('famcall', 'webrtc_ice', data).catch(()=>{})
-  })
-  socket.on('webrtc_accept', (data)=>{
-    socket.broadcast.emit('webrtc_accept', data)
-    if (pusher) pusher.trigger('famcall', 'webrtc_accept', data).catch(()=>{})
-  })
-  socket.on('webrtc_decline', (data)=>{
-    socket.broadcast.emit('webrtc_decline', data)
-    if (pusher) pusher.trigger('famcall', 'webrtc_decline', data).catch(()=>{})
-  })
-  socket.on('webrtc_hangup', (data)=>{
-    socket.broadcast.emit('webrtc_hangup', data)
-    if (pusher) pusher.trigger('famcall', 'webrtc_hangup', data).catch(()=>{})
-  })
+
+  // WebRTC signaling proxy — cílená signalizace jen příjemci (pole `to`)
+  const rtcEvents = ['webrtc_offer','webrtc_answer','webrtc_ice','webrtc_accept','webrtc_decline','webrtc_hangup'];
+  rtcEvents.forEach(ev => {
+    socket.on(ev, (data) => {
+      signalTo(ev, data);
+    });
+  });
 });
 
 const PORT = process.env.PORT || 3001;

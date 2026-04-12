@@ -543,6 +543,7 @@ export default function App() {
   const remoteStreamRef = useRef(null)
   const localVideoRef = useRef(null)
   const remoteVideoRef = useRef(null)
+  const remoteAudioRef = useRef(null)
   const pusherRef = useRef(null)
   const channelRef = useRef(null)
   const socketRef = useRef(null)
@@ -625,14 +626,14 @@ export default function App() {
     throw lastErr || new Error('API request failed')
   }
 
-  // Signalizace: pošli přes REST a zároveň přes Socket.IO (jako záloha)
+  // Signalizace: Socket.IO (přímé, cílené) s REST fallbackem
   const signalEvent = async (event, payload) => {
-    // Pošli přes Socket.IO přímo (nejrychlejší, funguje lokálně i přes proxy)
-    try {
-      const sock = socketRef.current
-      if (sock && sock.connected) sock.emit(event, payload)
-    } catch (_) {}
-    // Pošli přes REST API (potřebné pro Pusher broadcast a produkci)
+    const sock = socketRef.current
+    if (sock && sock.connected) {
+      // Socket.IO: okamžité, cílené — server pošle jen příjemci
+      try { sock.emit(event, payload); return } catch (_) {}
+    }
+    // REST fallback (když Socket.IO není připojeno)
     const pathMap = {
       webrtc_offer: '/rt/offer', webrtc_answer: '/rt/answer', webrtc_ice: '/rt/ice',
       webrtc_accept: '/rt/accept', webrtc_decline: '/rt/decline', webrtc_hangup: '/rt/hangup'
@@ -1370,9 +1371,14 @@ export default function App() {
       pc.ontrack = (ev) => {
         const [remote] = ev.streams
         remoteStreamRef.current = remote
+        // Pro videohovor nastav video element; pro hlasový hovor audio element
         if (remoteVideoRef.current) {
           remoteVideoRef.current.srcObject = remote
           try { remoteVideoRef.current.play() } catch(_){ }
+        }
+        if (remoteAudioRef.current) {
+          remoteAudioRef.current.srcObject = remote
+          try { remoteAudioRef.current.play() } catch(_){ }
         }
       }
       pc.onicecandidate = async (e) => {
@@ -1387,8 +1393,10 @@ export default function App() {
       if (pc.addTransceiver) {
         const ta = pc.addTransceiver('audio', { direction: 'sendrecv' })
         if (aTrack) { try { await ta.sender.replaceTrack(aTrack) } catch { try { pc.addTrack(aTrack, local) } catch {} } }
-        const tv = pc.addTransceiver('video', { direction: 'sendrecv' })
-        if (vTrack) { try { await tv.sender.replaceTrack(vTrack) } catch { try { pc.addTrack(vTrack, local) } catch {} } }
+        if (kind === 'video') {
+          const tv = pc.addTransceiver('video', { direction: 'sendrecv' })
+          if (vTrack) { try { await tv.sender.replaceTrack(vTrack) } catch { try { pc.addTrack(vTrack, local) } catch {} } }
+        }
       } else {
         if (aTrack) { try { pc.addTrack(aTrack, local) } catch(_){} }
         if (vTrack) { try { pc.addTrack(vTrack, local) } catch(_){} }
@@ -1446,6 +1454,7 @@ export default function App() {
     remoteStreamRef.current = null
     if (localVideoRef.current) localVideoRef.current.srcObject = null
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null
+    if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null
     peerIdRef.current = null
     setCallState({ active: false, incoming: false, outgoing: false, kind: 'audio', from: null, to: null, connecting: false, remoteName: '' })
   }
@@ -1783,6 +1792,8 @@ export default function App() {
               </div>
             ) : (
               <div style={{display:'flex',alignItems:'center',justifyContent:'center',flex:1,minHeight:120,color:'#e6edf3'}}>
+                {/* Skrytý audio element pro přehrávání hlasu protistrany */}
+                <audio ref={remoteAudioRef} autoPlay playsInline style={{display:'none'}} />
                 <div style={{textAlign:'center'}}>
                   <div style={{fontSize:48,marginBottom:8}}>📞</div>
                   <div>{callState.remoteName || 'Volání'}</div>
