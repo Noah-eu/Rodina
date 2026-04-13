@@ -638,6 +638,7 @@ export default function App() {
     // 1) Firestore — primární, funguje bez backendu/Pusheru/Socket.IO
     if (db && payload && payload.to) {
       try {
+        await ensureAuth  // počkej na anonymní přihlášení, jinak Firestore vrátí permission-denied
         const sigRef = collection(db, 'rtcSignals', payload.to, 'inbox')
         await addDoc(sigRef, { event, payload, ts: Date.now() })
         console.log('[signal] Firestore', event, '→', payload?.to, 'OK')
@@ -1265,11 +1266,12 @@ export default function App() {
   })
 
   // Firestore signalizační kanál: naslouchá na rtcSignals/{userId}/inbox
-  // Záloha pro produkci bez Pusheru a bez přímého Socket.IO (Netlify → Render)
   useEffect(() => {
     if (!user || !db) return
-    const sigRef = collection(db, 'rtcSignals', user.id, 'inbox')
-    const unsub = onSnapshot(sigRef, snap => {
+    let unsub = () => {}
+    ensureAuth.then(() => {
+      const sigRef = collection(db, 'rtcSignals', user.id, 'inbox')
+      unsub = onSnapshot(sigRef, snap => {
       snap.docChanges().forEach(async change => {
         if (change.type !== 'added') return
         const d = change.doc
@@ -1280,7 +1282,8 @@ export default function App() {
         try { await deleteDoc(d.ref) } catch(_){}
         handleRtcSignal.current(event, payload, d.id)
       })
-    })
+    }, err => { console.error('[rtcSignals] snapshot chyba:', err?.message) })
+    }).catch(e => console.error('[rtcSignals] auth chyba:', e?.message))
     return () => unsub()
   }, [user])
 
@@ -1347,12 +1350,14 @@ export default function App() {
     }
   }, [user, audioReady, callState.active])
 
-  // Firestore fallback pro příchozí hovory (nezávisle na backend push/realtime)
+  // Firestore primární kanál pro příchozí hovory
   useEffect(() => {
     if (!user || !db) return
+    let unsub = () => {}
+    ensureAuth.then(() => {
     const callsCol = collection(db, 'callSignals')
     const qCalls = query(callsCol, where('to', '==', user.id), limit(30))
-    const unsub = onSnapshot(qCalls, (snap) => {
+    unsub = onSnapshot(qCalls, (snap) => {
       snap.docs.forEach(async (d) => {
         const info = d.data() || {}
         const callId = d.id
@@ -1394,7 +1399,8 @@ export default function App() {
 
         try { await deleteDoc(d.ref) } catch (_) {}
       })
-    })
+    }, err => { console.error('[callSignals] snapshot chyba:', err?.message) })
+    }).catch(e => console.error('[callSignals] auth chyba:', e?.message))
     return () => unsub()
   }, [user, audioReady])
 
@@ -1509,6 +1515,7 @@ export default function App() {
     // 1) Firestore callSignals — primární, funguje bez backendu
     if (db) {
       try {
+        await ensureAuth
         await addDoc(collection(db, 'callSignals'), {
           from: user.id, to: selectedUser.id, kind, fromName: user.name, ts: Date.now()
         })
