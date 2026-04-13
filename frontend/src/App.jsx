@@ -634,30 +634,36 @@ export default function App() {
   }
 
   // Signalizace: Socket.IO + REST (Pusher) + Firestore fallback
-  // Tři nezávislé kanály — alespoň jeden vždy doručí zprávu
   const signalEvent = async (event, payload) => {
-    // 1) Socket.IO: přímé okamžité doručení (funguje lokálně nebo při přímém WS)
+    // 1) Socket.IO: přímé okamžité doručení
     try {
       const sock = socketRef.current
-      if (sock && sock.connected) sock.emit(event, payload)
+      if (sock && sock.connected) {
+        sock.emit(event, payload)
+        console.log('[signal] Socket.IO emit', event, '→', payload?.to)
+      }
     } catch (_) {}
 
-    // 2) REST: backend přeposílá příjemci přes Socket.IO cíleně a/nebo Pusher
+    // 2) REST → backend → Pusher / cílený Socket.IO
     const pathMap = {
       webrtc_offer: '/rt/offer', webrtc_answer: '/rt/answer', webrtc_ice: '/rt/ice',
       webrtc_accept: '/rt/accept', webrtc_decline: '/rt/decline', webrtc_hangup: '/rt/hangup'
     }
     const path = pathMap[event]
     if (path) {
-      try { await postApi(path, payload) } catch (_) {}
+      try {
+        await postApi(path, payload)
+        console.log('[signal] REST', event, '→', payload?.to, 'OK')
+      } catch (e) { console.error('[signal] REST', event, 'CHYBA:', e?.message) }
     }
 
-    // 3) Firestore fallback: funguje vždy bez závislosti na backendu/Pusher/Socket.IO
+    // 3) Firestore fallback
     if (db && payload && payload.to) {
       try {
         const sigRef = collection(db, 'rtcSignals', payload.to, 'inbox')
         await addDoc(sigRef, { event, payload, ts: Date.now() })
-      } catch (_) {}
+        console.log('[signal] Firestore', event, '→', payload?.to, 'OK')
+      } catch (e) { console.error('[signal] Firestore', event, 'CHYBA:', e?.message) }
     }
   }
 
@@ -1093,15 +1099,15 @@ export default function App() {
       const onOffer = async (data) => {
         if (!data || data.to !== user.id) return
         if (dedup('offer', data)) return
+        console.log('[RTC] onOffer přijat od', data.from)
         peerIdRef.current = data.from
         callKindRef.current = data.kind || callKindRef.current || 'audio'
         try {
           await ensureLocalMedia(data.kind || 'audio')
           await ensurePeerConnection(data.kind || 'audio')
           await pcRef.current.setRemoteDescription(data.sdp)
-          // Vyprázdni frontu ICE kandidátů nahromaděných před setRemoteDescription
           for (const c of iceCandidateQueueRef.current) {
-            try { await pcRef.current.addIceCandidate(c) } catch(_){}
+            try { await pcRef.current.addIceCandidate(c) } catch(e){ console.warn('[RTC] ICE queue err', e) }
           }
           iceCandidateQueueRef.current = []
           const answer = await pcRef.current.createAnswer()
@@ -1109,22 +1115,24 @@ export default function App() {
           await signalEvent('webrtc_answer', { from: user.id, to: data.from, sdp: pcRef.current.localDescription, kind: data.kind || 'audio' })
           stopRing()
           setCallState(cs => ({ ...cs, active: true, incoming: false, outgoing: false, connecting: false }))
-        } catch (_) {}
+          console.log('[RTC] onOffer zpracován OK, hovor aktivní')
+        } catch (e) { console.error('[RTC] onOffer chyba:', e) }
       }
       const onAnswer = async (data) => {
         if (!data || data.to !== user.id) return
         if (dedup('answer', data)) return
+        console.log('[RTC] onAnswer přijat od', data.from)
         try {
           await pcRef.current?.setRemoteDescription(data.sdp)
-          // Vyprázdni frontu ICE kandidátů
           for (const c of iceCandidateQueueRef.current) {
-            try { await pcRef.current.addIceCandidate(c) } catch(_){}
+            try { await pcRef.current.addIceCandidate(c) } catch(e){ console.warn('[RTC] ICE queue err', e) }
           }
           iceCandidateQueueRef.current = []
-        } catch(_){}
+        } catch(e){ console.error('[RTC] onAnswer setRemoteDescription chyba:', e) }
         stopRing()
         clearIncomingTimeout()
         setCallState(cs => ({ ...cs, connecting: false, active: true }))
+        console.log('[RTC] onAnswer zpracován OK, hovor aktivní')
       }
       const onIce = async (data) => {
         if (!data) return
@@ -1144,14 +1152,15 @@ export default function App() {
       const onAccept = async (data) => {
         if (!data || data.to !== user.id) return
         if (dedup('accept', data)) return
-        // Callee přijal — volající teď může poslat offer
+        console.log('[RTC] onAccept — callee přijal, posílám offer')
         try {
           const k = callKindRef.current || 'audio'
           await ensurePeerConnection(k)
           const offer = await pcRef.current.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: k==='video' })
           await pcRef.current.setLocalDescription(offer)
           await signalEvent('webrtc_offer', { from: user.id, to: peerIdRef.current, sdp: pcRef.current.localDescription, kind: k })
-        } catch (_) {}
+          console.log('[RTC] offer odeslán na', peerIdRef.current)
+        } catch (e) { console.error('[RTC] onAccept chyba:', e) }
       }
 
       const onDecline = (data) => {
@@ -1179,11 +1188,16 @@ export default function App() {
       onHangupRef.current = onHangup
 
       if (ch) {
-        ch.bind('incoming_call', onIncoming)
-        ch.bind('webrtc_offer', onOffer)
-        ch.bind('webrtc_answer', onAnswer)
+        console.log('[Pusher] přihlášen k odběru kanálu famcall')
+        const onIncomingLog = (d) => { console.log('[Pusher] incoming_call přijat'); onIncoming(d) }
+        const onOfferLog = (d) => { console.log('[Pusher] webrtc_offer přijat'); onOffer(d) }
+        const onAnswerLog = (d) => { console.log('[Pusher] webrtc_answer přijat'); onAnswer(d) }
+        const onAcceptLog = (d) => { console.log('[Pusher] webrtc_accept přijat'); onAccept(d) }
+        ch.bind('incoming_call', onIncomingLog)
+        ch.bind('webrtc_offer', onOfferLog)
+        ch.bind('webrtc_answer', onAnswerLog)
         ch.bind('webrtc_ice', onIce)
-        ch.bind('webrtc_accept', onAccept)
+        ch.bind('webrtc_accept', onAcceptLog)
         ch.bind('webrtc_decline', onDecline)
         ch.bind('webrtc_hangup', onHangup)
       }
@@ -1195,8 +1209,10 @@ export default function App() {
         : null
       if (socket) {
         socket.on('connect', () => {
+          console.log('[Socket.IO] připojeno, registruji userId', user.id)
           try { socket.emit('registerSocket', user.id) } catch (_){ }
         })
+        socket.on('connect_error', (e) => { console.warn('[Socket.IO] chyba připojení:', e?.message) })
         socket.on('incoming_call', onIncoming)
         socket.on('webrtc_offer', onOffer)
         socket.on('webrtc_answer', onAnswer)
@@ -1209,13 +1225,7 @@ export default function App() {
       return () => {
         try {
           if (ch) {
-            ch.unbind('incoming_call', onIncoming)
-            ch.unbind('webrtc_offer', onOffer)
-            ch.unbind('webrtc_answer', onAnswer)
-            ch.unbind('webrtc_ice', onIce)
-            ch.unbind('webrtc_accept', onAccept)
-            ch.unbind('webrtc_decline', onDecline)
-            ch.unbind('webrtc_hangup', onHangup)
+            ch.unbind_all()
           }
           if (p) {
             p.unsubscribe('famcall')
@@ -1537,22 +1547,22 @@ export default function App() {
   }
 
   async function acceptCall(){
+    console.log('[RTC] acceptCall — přijímám hovor, peer:', peerIdRef.current)
     setCallState(cs => ({ ...cs, incoming: false, connecting: true }))
-    // Vyčisti ICE frontu pro nové spojení
     iceCandidateQueueRef.current = []
     try {
       const k = callKindRef.current || callState.kind || 'audio'
       await ensureLocalMedia(k)
-      // Nepřidávej tracky do PC hned — přidáme je až v onOffer, aby nedošlo k neúplnému SDP
-      // signalizuj protistraně, že může poslat offer
       if (peerIdRef.current) {
         await signalEvent('webrtc_accept', { from: user.id, to: peerIdRef.current })
+        console.log('[RTC] webrtc_accept odeslán na', peerIdRef.current)
+      } else {
+        console.error('[RTC] acceptCall — peerIdRef je prázdný!')
       }
       stopRing()
       clearIncomingTimeout()
     } catch(e){
-      // Pokud média selžou, informuj uživatele a zrušit přijetí
-      console.error('acceptCall failed', e)
+      console.error('[RTC] acceptCall chyba:', e)
       setCallState(cs => ({ ...cs, incoming: true, connecting: false }))
     }
   }
