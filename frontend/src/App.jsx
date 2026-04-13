@@ -1086,63 +1086,69 @@ export default function App() {
           }
         }, 45000)
       }
-      // Dedup klíč pro prevenci duplicitního zpracování z více kanálů
-      const dedupKey = (event, data) => `${event}:${data?.from}:${data?.ts || data?.sdp?.sdp?.slice(0,20) || ''}`
-      const dedupSeen = new Set()
-      const dedup = (event, data) => {
-        const k = dedupKey(event, data)
-        if (dedupSeen.has(k)) return true
-        dedupSeen.add(k)
+      // Dedup — jen v rámci jednoho hovoru (reset v endCall/acceptCall), nikoli celé session
+      // Klíč: event + Firestore doc ID nebo SDP fingerprint
+      const recentMsgIds = new Set()
+      const isDupe = (id) => {
+        if (!id) return false
+        if (recentMsgIds.has(id)) return true
+        recentMsgIds.add(id)
         return false
       }
 
+      // Pomocná: převeď SDP na plain object (Firestore neumí uložit RTCSessionDescription instanci)
+      const sdpToPlain = (sdp) => sdp ? { type: sdp.type, sdp: sdp.sdp } : null
+
       const onOffer = async (data) => {
         if (!data || data.to !== user.id) return
-        if (dedup('offer', data)) return
         console.log('[RTC] onOffer přijat od', data.from)
         peerIdRef.current = data.from
         callKindRef.current = data.kind || callKindRef.current || 'audio'
         try {
           await ensureLocalMedia(data.kind || 'audio')
           await ensurePeerConnection(data.kind || 'audio')
-          await pcRef.current.setRemoteDescription(data.sdp)
+          await pcRef.current.setRemoteDescription(new RTCSessionDescription(data.sdp))
+          // Vyprázdni frontu ICE kandidátů
           for (const c of iceCandidateQueueRef.current) {
             try { await pcRef.current.addIceCandidate(c) } catch(e){ console.warn('[RTC] ICE queue err', e) }
           }
           iceCandidateQueueRef.current = []
           const answer = await pcRef.current.createAnswer()
           await pcRef.current.setLocalDescription(answer)
-          await signalEvent('webrtc_answer', { from: user.id, to: data.from, sdp: pcRef.current.localDescription, kind: data.kind || 'audio' })
+          await signalEvent('webrtc_answer', {
+            from: user.id, to: data.from,
+            sdp: sdpToPlain(pcRef.current.localDescription),
+            kind: data.kind || 'audio'
+          })
           stopRing()
           setCallState(cs => ({ ...cs, active: true, incoming: false, outgoing: false, connecting: false }))
-          console.log('[RTC] onOffer zpracován OK, hovor aktivní')
+          console.log('[RTC] onOffer OK — hovor aktivní')
         } catch (e) { console.error('[RTC] onOffer chyba:', e) }
       }
+
       const onAnswer = async (data) => {
         if (!data || data.to !== user.id) return
-        if (dedup('answer', data)) return
         console.log('[RTC] onAnswer přijat od', data.from)
         try {
-          await pcRef.current?.setRemoteDescription(data.sdp)
+          await pcRef.current?.setRemoteDescription(new RTCSessionDescription(data.sdp))
           for (const c of iceCandidateQueueRef.current) {
             try { await pcRef.current.addIceCandidate(c) } catch(e){ console.warn('[RTC] ICE queue err', e) }
           }
           iceCandidateQueueRef.current = []
-        } catch(e){ console.error('[RTC] onAnswer setRemoteDescription chyba:', e) }
+          console.log('[RTC] onAnswer OK — hovor aktivní')
+        } catch(e){ console.error('[RTC] onAnswer chyba:', e) }
         stopRing()
         clearIncomingTimeout()
         setCallState(cs => ({ ...cs, connecting: false, active: true }))
-        console.log('[RTC] onAnswer zpracován OK, hovor aktivní')
       }
+
       const onIce = async (data) => {
         if (!data) return
-        // Candidate může přijít oběma směrům; filtruj na aktuálního peerId
         const peer = peerIdRef.current
         if (data.from && peer && data.from !== peer) return
+        // Pokud PC ještě neexistuje nebo nemá remoteDescription, zařaď do fronty
         const pc = pcRef.current
-        if (!pc) return
-        // Pokud PC ještě nemá remote description, zařaď kandidáta do fronty
-        if (!pc.remoteDescription || !pc.remoteDescription.type) {
+        if (!pc || !pc.remoteDescription || !pc.remoteDescription.type) {
           if (data.candidate) iceCandidateQueueRef.current.push(data.candidate)
           return
         }
@@ -1151,14 +1157,20 @@ export default function App() {
 
       const onAccept = async (data) => {
         if (!data || data.to !== user.id) return
-        if (dedup('accept', data)) return
         console.log('[RTC] onAccept — callee přijal, posílám offer')
         try {
           const k = callKindRef.current || 'audio'
+          // Vždy vytvoř čerstvé PC (předchozí mohlo být ve špatném stavu)
+          if (pcRef.current) { try { pcRef.current.close() } catch(_){} ; pcRef.current = null }
+          iceCandidateQueueRef.current = []
           await ensurePeerConnection(k)
-          const offer = await pcRef.current.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: k==='video' })
+          const offer = await pcRef.current.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: k === 'video' })
           await pcRef.current.setLocalDescription(offer)
-          await signalEvent('webrtc_offer', { from: user.id, to: peerIdRef.current, sdp: pcRef.current.localDescription, kind: k })
+          await signalEvent('webrtc_offer', {
+            from: user.id, to: peerIdRef.current,
+            sdp: sdpToPlain(pcRef.current.localDescription),
+            kind: k
+          })
           console.log('[RTC] offer odeslán na', peerIdRef.current)
         } catch (e) { console.error('[RTC] onAccept chyba:', e) }
       }
@@ -1246,16 +1258,8 @@ export default function App() {
     } catch (_) {}
   }, [user])
 
-  // Globální dedup pro WebRTC signalizační zprávy — zabrání zpracování stejné zprávy
-  // více kanály (Socket.IO + REST/Pusher + Firestore mohou doručit totéž)
-  const seenRtcMsgIds = useRef(new Set())
-
-  // Zpracování příchozí WebRTC signalizační zprávy (společné pro všechny kanály)
-  const handleRtcSignal = useRef((event, payload, msgId) => {
-    if (msgId) {
-      if (seenRtcMsgIds.current.has(msgId)) return
-      seenRtcMsgIds.current.add(msgId)
-    }
+  // Zpracování příchozí WebRTC signalizační zprávy z Firestore inbox
+  const handleRtcSignal = useRef((event, payload) => {
     if (!event || !payload) return
     if (event === 'webrtc_offer') onOfferRef.current && onOfferRef.current(payload)
     else if (event === 'webrtc_answer') onAnswerRef.current && onAnswerRef.current(payload)
@@ -1280,7 +1284,7 @@ export default function App() {
         if (ts && Date.now() - ts > 120000) { try { await deleteDoc(d.ref) } catch(_){} ; return }
         // Smaž zprávu po přečtení (inbox pattern)
         try { await deleteDoc(d.ref) } catch(_){}
-        handleRtcSignal.current(event, payload, d.id)
+        handleRtcSignal.current(event, payload)
       })
     }, err => { console.error('[rtcSignals] snapshot chyba:', err?.message) })
     }).catch(e => console.error('[rtcSignals] auth chyba:', e?.message))
@@ -1561,6 +1565,8 @@ export default function App() {
   async function acceptCall(){
     console.log('[RTC] acceptCall — přijímám hovor, peer:', peerIdRef.current)
     setCallState(cs => ({ ...cs, incoming: false, connecting: true }))
+    // Vyčisti stará PC a ICE frontu pro čistý start
+    if (pcRef.current) { try { pcRef.current.close() } catch(_){} ; pcRef.current = null }
     iceCandidateQueueRef.current = []
     try {
       const k = callKindRef.current || callState.kind || 'audio'
