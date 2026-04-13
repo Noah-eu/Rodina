@@ -633,9 +633,18 @@ export default function App() {
     throw lastErr || new Error('API request failed')
   }
 
-  // Signalizace: Socket.IO + REST (Pusher) + Firestore fallback
+  // Signalizace: Firestore (primární) + Socket.IO + REST/Pusher (zálohy)
   const signalEvent = async (event, payload) => {
-    // 1) Socket.IO: přímé okamžité doručení
+    // 1) Firestore — primární, funguje bez backendu/Pusheru/Socket.IO
+    if (db && payload && payload.to) {
+      try {
+        const sigRef = collection(db, 'rtcSignals', payload.to, 'inbox')
+        await addDoc(sigRef, { event, payload, ts: Date.now() })
+        console.log('[signal] Firestore', event, '→', payload?.to, 'OK')
+      } catch (e) { console.error('[signal] Firestore', event, 'CHYBA:', e?.message) }
+    }
+
+    // 2) Socket.IO — přímé pokud je připojeno
     try {
       const sock = socketRef.current
       if (sock && sock.connected) {
@@ -644,26 +653,16 @@ export default function App() {
       }
     } catch (_) {}
 
-    // 2) REST → backend → Pusher / cílený Socket.IO
+    // 3) REST → backend → Pusher (záloha, neblokuje)
     const pathMap = {
       webrtc_offer: '/rt/offer', webrtc_answer: '/rt/answer', webrtc_ice: '/rt/ice',
       webrtc_accept: '/rt/accept', webrtc_decline: '/rt/decline', webrtc_hangup: '/rt/hangup'
     }
     const path = pathMap[event]
     if (path) {
-      try {
-        await postApi(path, payload)
-        console.log('[signal] REST', event, '→', payload?.to, 'OK')
-      } catch (e) { console.error('[signal] REST', event, 'CHYBA:', e?.message) }
-    }
-
-    // 3) Firestore fallback
-    if (db && payload && payload.to) {
-      try {
-        const sigRef = collection(db, 'rtcSignals', payload.to, 'inbox')
-        await addDoc(sigRef, { event, payload, ts: Date.now() })
-        console.log('[signal] Firestore', event, '→', payload?.to, 'OK')
-      } catch (e) { console.error('[signal] Firestore', event, 'CHYBA:', e?.message) }
+      postApi(path, payload)
+        .then(() => console.log('[signal] REST', event, 'OK'))
+        .catch(e => console.warn('[signal] REST', event, 'nedostupný:', e?.message))
     }
   }
 
@@ -1452,8 +1451,14 @@ export default function App() {
     }
     pcCreatingRef.current = true
     try {
-      const iceResp = await getApi('/ice').then(r=>r.json()).catch(()=>({ iceServers: [ { urls: 'stun:stun.l.google.com:19302' } ] }))
-      const pc = new RTCPeerConnection({ iceServers: iceResp.iceServers || [ { urls: 'stun:stun.l.google.com:19302' } ] })
+      // Veřejné STUN servery — fungují bez backendu
+      const defaultIce = [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun.cloudflare.com:3478' },
+      ]
+      const iceResp = await getApi('/ice').then(r=>r.json()).catch(()=>({ iceServers: defaultIce }))
+      const pc = new RTCPeerConnection({ iceServers: (iceResp.iceServers && iceResp.iceServers.length) ? iceResp.iceServers : defaultIce })
       pcRef.current = pc
       pc.ontrack = (ev) => {
         const [remote] = ev.streams
@@ -1499,26 +1504,26 @@ export default function App() {
     peerIdRef.current = selectedUser.id
     callKindRef.current = kind
     setCallState({ active: false, incoming: false, outgoing: true, kind, from: user.id, to: selectedUser.id, connecting: true, remoteName: selectedUser.name })
-    // Oznám příchozí hovor druhé straně (ring); offer se pošle až po explicitním accept
-    try { await postApi('/call', { from: user.id, to: selectedUser.id, kind, fromName: user.name }) } catch(_){}
-    // Firestore fallback, když backend/realtime nedoručí event
-    try {
-      if (db) {
+    console.log('[startCall] volám', selectedUser.name, 'kind:', kind)
+
+    // 1) Firestore callSignals — primární, funguje bez backendu
+    if (db) {
+      try {
         await addDoc(collection(db, 'callSignals'), {
-          from: user.id,
-          to: selectedUser.id,
-          kind,
-          fromName: user.name,
-          ts: Date.now()
+          from: user.id, to: selectedUser.id, kind, fromName: user.name, ts: Date.now()
         })
-      }
-    } catch(_){}
+        console.log('[startCall] Firestore callSignals OK')
+      } catch(e) { console.error('[startCall] Firestore chyba:', e?.message) }
+    }
+
+    // 2) REST /api/call → backend push notification + Pusher (záloha)
+    try { await postApi('/call', { from: user.id, to: selectedUser.id, kind, fromName: user.name }) }
+    catch(_) { console.warn('[startCall] REST /call selhal (backend nedostupný), pokračuji)') }
+
     try { await ensureLocalMedia(kind) } catch(_){}
 
-    // Nastav timeout na nezdvihnutý odchozí hovor (bez odpovědi)
     clearTimeout(incomingTimeoutRef.current)
     incomingTimeoutRef.current = setTimeout(() => {
-      // Pokud se hovor během 45s nerozeběhne (callee neodpověděl), ukonči zvonění a hovor
       if (!callActiveRef.current) {
         stopRing()
         endCall()
