@@ -1080,8 +1080,19 @@ export default function App() {
           }
         }, 45000)
       }
+      // Dedup klíč pro prevenci duplicitního zpracování z více kanálů
+      const dedupKey = (event, data) => `${event}:${data?.from}:${data?.ts || data?.sdp?.sdp?.slice(0,20) || ''}`
+      const dedupSeen = new Set()
+      const dedup = (event, data) => {
+        const k = dedupKey(event, data)
+        if (dedupSeen.has(k)) return true
+        dedupSeen.add(k)
+        return false
+      }
+
       const onOffer = async (data) => {
         if (!data || data.to !== user.id) return
+        if (dedup('offer', data)) return
         peerIdRef.current = data.from
         callKindRef.current = data.kind || callKindRef.current || 'audio'
         try {
@@ -1102,6 +1113,7 @@ export default function App() {
       }
       const onAnswer = async (data) => {
         if (!data || data.to !== user.id) return
+        if (dedup('answer', data)) return
         try {
           await pcRef.current?.setRemoteDescription(data.sdp)
           // Vyprázdni frontu ICE kandidátů
@@ -1131,6 +1143,7 @@ export default function App() {
 
       const onAccept = async (data) => {
         if (!data || data.to !== user.id) return
+        if (dedup('accept', data)) return
         // Callee přijal — volající teď může poslat offer
         try {
           const k = callKindRef.current || 'audio'
@@ -1223,31 +1236,40 @@ export default function App() {
     } catch (_) {}
   }, [user])
 
+  // Globální dedup pro WebRTC signalizační zprávy — zabrání zpracování stejné zprávy
+  // více kanály (Socket.IO + REST/Pusher + Firestore mohou doručit totéž)
+  const seenRtcMsgIds = useRef(new Set())
+
+  // Zpracování příchozí WebRTC signalizační zprávy (společné pro všechny kanály)
+  const handleRtcSignal = useRef((event, payload, msgId) => {
+    if (msgId) {
+      if (seenRtcMsgIds.current.has(msgId)) return
+      seenRtcMsgIds.current.add(msgId)
+    }
+    if (!event || !payload) return
+    if (event === 'webrtc_offer') onOfferRef.current && onOfferRef.current(payload)
+    else if (event === 'webrtc_answer') onAnswerRef.current && onAnswerRef.current(payload)
+    else if (event === 'webrtc_ice') onIceRef.current && onIceRef.current(payload)
+    else if (event === 'webrtc_accept') onAcceptRef.current && onAcceptRef.current(payload)
+    else if (event === 'webrtc_decline') onDeclineRef.current && onDeclineRef.current(payload)
+    else if (event === 'webrtc_hangup') onHangupRef.current && onHangupRef.current(payload)
+  })
+
   // Firestore signalizační kanál: naslouchá na rtcSignals/{userId}/inbox
   // Záloha pro produkci bez Pusheru a bez přímého Socket.IO (Netlify → Render)
   useEffect(() => {
     if (!user || !db) return
-    const seenSigIds = new Set()
     const sigRef = collection(db, 'rtcSignals', user.id, 'inbox')
     const unsub = onSnapshot(sigRef, snap => {
       snap.docChanges().forEach(async change => {
         if (change.type !== 'added') return
         const d = change.doc
         const { event, payload, ts } = d.data() || {}
-        // Ignoruj staré zprávy (>30s) a duplicity
-        if (ts && Date.now() - ts > 30000) { try { await deleteDoc(d.ref) } catch(_){} ; return }
-        if (seenSigIds.has(d.id)) return
-        seenSigIds.add(d.id)
-        // Smaž zprávu po přečtení
+        // Ignoruj zprávy starší než 2 minuty
+        if (ts && Date.now() - ts > 120000) { try { await deleteDoc(d.ref) } catch(_){} ; return }
+        // Smaž zprávu po přečtení (inbox pattern)
         try { await deleteDoc(d.ref) } catch(_){}
-        if (!event || !payload) return
-        // Zpracuj podle typu události
-        if (event === 'webrtc_offer') onOfferRef.current && onOfferRef.current(payload)
-        else if (event === 'webrtc_answer') onAnswerRef.current && onAnswerRef.current(payload)
-        else if (event === 'webrtc_ice') onIceRef.current && onIceRef.current(payload)
-        else if (event === 'webrtc_accept') onAcceptRef.current && onAcceptRef.current(payload)
-        else if (event === 'webrtc_decline') onDeclineRef.current && onDeclineRef.current(payload)
-        else if (event === 'webrtc_hangup') onHangupRef.current && onHangupRef.current(payload)
+        handleRtcSignal.current(event, payload, d.id)
       })
     })
     return () => unsub()
@@ -1815,6 +1837,15 @@ export default function App() {
 
   if (!user) return <>{installModal}<Auth onAuth={handleAuth} /></>
 
+  // Diagnostika konfigurace — viditelná v nastavení
+  const configDiag = {
+    firebase: Boolean(db),
+    socketUrl: (import.meta.env.VITE_API_URL || ''),
+    pusherKey: Boolean(import.meta.env.VITE_PUSHER_KEY),
+    socketConnected: Boolean(socketRef.current?.connected),
+    pusherState: diag.pusher,
+  }
+
   return (
   <div className={"app" + (selectedUser ? " chat-open" : " no-chat") + (theme && theme!=='default' ? ` theme-${theme}` : '')}>
       {installModal}
@@ -1833,7 +1864,7 @@ export default function App() {
           </button>
         </div>
       )}
-      {isSettingsOpen && <SettingsModal user={user} theme={theme} onThemeChange={handleThemeChange} onAuth={handleAuth} onClose={() => setIsSettingsOpen(false)} />}
+      {isSettingsOpen && <SettingsModal user={user} theme={theme} onThemeChange={handleThemeChange} onAuth={handleAuth} onClose={() => setIsSettingsOpen(false)} configDiag={configDiag} />}
       <aside className="sidebar">
         <div className="sidebar-header">
           <h2>Rodina</h2>
@@ -1954,7 +1985,7 @@ export default function App() {
   )
 }
 
-function SettingsModal({ user, theme='default', onThemeChange=()=>{}, onAuth, onClose }) {
+function SettingsModal({ user, theme='default', onThemeChange=()=>{}, onAuth, onClose, configDiag={} }) {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [avatarFile, setAvatarFile] = useState(null)
   const [feedback, setFeedback] = useState('')
@@ -2033,6 +2064,17 @@ function SettingsModal({ user, theme='default', onThemeChange=()=>{}, onAuth, on
           </button>
           {feedback && <p className="feedback">{feedback}</p>}
         </form>
+        <div style={{marginTop:16,padding:'12px',background:'#0d1117',borderRadius:10,border:'1px solid #21262d',fontSize:12,color:'#8b949e'}}>
+          <strong style={{color:'#e6edf3',display:'block',marginBottom:8}}>Diagnostika připojení</strong>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'4px 12px'}}>
+            <span>Firebase:</span><span style={{color: configDiag.firebase ? '#3fb950' : '#f85149'}}>{configDiag.firebase ? '✓ OK' : '✗ chybí env vars'}</span>
+            <span>Pusher:</span><span style={{color: configDiag.pusherKey ? '#3fb950' : '#f85149'}}>{configDiag.pusherKey ? `✓ ${configDiag.pusherState}` : '✗ VITE_PUSHER_KEY chybí'}</span>
+            <span>Socket.IO URL:</span><span style={{color: configDiag.socketUrl ? '#3fb950' : '#f85149'}}>{configDiag.socketUrl || '✗ VITE_API_URL chybí'}</span>
+            <span>Socket.IO:</span><span style={{color: configDiag.socketConnected ? '#3fb950' : '#e3b341'}}>{configDiag.socketConnected ? '✓ připojeno' : '⚠ nepřipojeno'}</span>
+          </div>
+          {!configDiag.firebase && <p style={{marginTop:8,color:'#f85149'}}>⚠ Bez Firebase nefungují hovory ani zprávy. Nastav VITE_FIREBASE_* v Netlify.</p>}
+          {!configDiag.pusherKey && !configDiag.socketConnected && configDiag.firebase && <p style={{marginTop:8,color:'#e3b341'}}>⚠ Signalizace hovorů běží jen přes Firestore. Pro lepší spolehlivost nastav VITE_PUSHER_KEY nebo VITE_API_URL.</p>}
+        </div>
         <button className="close-btn" onClick={onClose}>Zavřít</button>
       </div>
     </div>
