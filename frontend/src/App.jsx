@@ -1086,21 +1086,17 @@ export default function App() {
           }
         }, 45000)
       }
-      // Dedup — jen v rámci jednoho hovoru (reset v endCall/acceptCall), nikoli celé session
-      // Klíč: event + Firestore doc ID nebo SDP fingerprint
-      const recentMsgIds = new Set()
-      const isDupe = (id) => {
-        if (!id) return false
-        if (recentMsgIds.has(id)) return true
-        recentMsgIds.add(id)
-        return false
-      }
-
-      // Pomocná: převeď SDP na plain object (Firestore neumí uložit RTCSessionDescription instanci)
+      // Pomocná: převeď SDP na plain object (Firestore neumí serializovat RTCSessionDescription)
       const sdpToPlain = (sdp) => sdp ? { type: sdp.type, sdp: sdp.sdp } : null
+
+      // Zamykání: zabraňuje souběžnému zpracování accept/offer ze dvou kanálů
+      let offerSent = false   // caller: offer byl již odeslán
+      let offerReceived = false // callee: offer byl již zpracován
 
       const onOffer = async (data) => {
         if (!data || data.to !== user.id) return
+        if (offerReceived) { console.log('[RTC] onOffer ignorován — již zpracován'); return }
+        offerReceived = true
         console.log('[RTC] onOffer přijat od', data.from)
         peerIdRef.current = data.from
         callKindRef.current = data.kind || callKindRef.current || 'audio'
@@ -1108,7 +1104,6 @@ export default function App() {
           await ensureLocalMedia(data.kind || 'audio')
           await ensurePeerConnection(data.kind || 'audio')
           await pcRef.current.setRemoteDescription(new RTCSessionDescription(data.sdp))
-          // Vyprázdni frontu ICE kandidátů
           for (const c of iceCandidateQueueRef.current) {
             try { await pcRef.current.addIceCandidate(c) } catch(e){ console.warn('[RTC] ICE queue err', e) }
           }
@@ -1123,19 +1118,20 @@ export default function App() {
           stopRing()
           setCallState(cs => ({ ...cs, active: true, incoming: false, outgoing: false, connecting: false }))
           console.log('[RTC] onOffer OK — hovor aktivní')
-        } catch (e) { console.error('[RTC] onOffer chyba:', e) }
+        } catch (e) { console.error('[RTC] onOffer chyba:', e); offerReceived = false }
       }
 
       const onAnswer = async (data) => {
         if (!data || data.to !== user.id) return
         console.log('[RTC] onAnswer přijat od', data.from)
         try {
-          await pcRef.current?.setRemoteDescription(new RTCSessionDescription(data.sdp))
+          if (!pcRef.current) { console.error('[RTC] onAnswer — pcRef je null!'); return }
+          await pcRef.current.setRemoteDescription(new RTCSessionDescription(data.sdp))
           for (const c of iceCandidateQueueRef.current) {
             try { await pcRef.current.addIceCandidate(c) } catch(e){ console.warn('[RTC] ICE queue err', e) }
           }
           iceCandidateQueueRef.current = []
-          console.log('[RTC] onAnswer OK — hovor aktivní')
+          console.log('[RTC] onAnswer OK — přepínám na aktivní')
         } catch(e){ console.error('[RTC] onAnswer chyba:', e) }
         stopRing()
         clearIncomingTimeout()
@@ -1146,7 +1142,6 @@ export default function App() {
         if (!data) return
         const peer = peerIdRef.current
         if (data.from && peer && data.from !== peer) return
-        // Pokud PC ještě neexistuje nebo nemá remoteDescription, zařaď do fronty
         const pc = pcRef.current
         if (!pc || !pc.remoteDescription || !pc.remoteDescription.type) {
           if (data.candidate) iceCandidateQueueRef.current.push(data.candidate)
@@ -1157,12 +1152,17 @@ export default function App() {
 
       const onAccept = async (data) => {
         if (!data || data.to !== user.id) return
+        if (offerSent) { console.log('[RTC] onAccept ignorován — offer již odeslán'); return }
+        offerSent = true
         console.log('[RTC] onAccept — callee přijal, posílám offer')
         try {
           const k = callKindRef.current || 'audio'
-          // Vždy vytvoř čerstvé PC (předchozí mohlo být ve špatném stavu)
-          if (pcRef.current) { try { pcRef.current.close() } catch(_){} ; pcRef.current = null }
-          iceCandidateQueueRef.current = []
+          // PC mohl být vytvořen v startCall, ale je bez remote description — to je OK
+          // Pokud existuje a je closed/failed, vytvoř nové
+          if (pcRef.current && pcRef.current.connectionState === 'closed') {
+            pcRef.current = null
+            iceCandidateQueueRef.current = []
+          }
           await ensurePeerConnection(k)
           const offer = await pcRef.current.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: k === 'video' })
           await pcRef.current.setLocalDescription(offer)
@@ -1172,7 +1172,7 @@ export default function App() {
             kind: k
           })
           console.log('[RTC] offer odeslán na', peerIdRef.current)
-        } catch (e) { console.error('[RTC] onAccept chyba:', e) }
+        } catch (e) { console.error('[RTC] onAccept chyba:', e); offerSent = false }
       }
 
       const onDecline = (data) => {
@@ -1488,6 +1488,15 @@ export default function App() {
           await signalEvent('webrtc_ice', { from: user.id, to: peerIdRef.current, candidate: e.candidate })
         }
       }
+      // Sleduj stav spojení — záloha pro případ, že onAnswer nepřepne UI na active
+      pc.onconnectionstatechange = () => {
+        console.log('[RTC] connectionState:', pc.connectionState)
+        if (pc.connectionState === 'connected') {
+          setCallState(cs => ({ ...cs, connecting: false, active: true }))
+        } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+          console.warn('[RTC] spojení selhalo:', pc.connectionState)
+        }
+      }
       // Připoj lokální média
       const local = await ensureLocalMedia(kind)
       const aTrack = local.getAudioTracks()[0] || null
@@ -1565,8 +1574,8 @@ export default function App() {
   async function acceptCall(){
     console.log('[RTC] acceptCall — přijímám hovor, peer:', peerIdRef.current)
     setCallState(cs => ({ ...cs, incoming: false, connecting: true }))
-    // Vyčisti stará PC a ICE frontu pro čistý start
-    if (pcRef.current) { try { pcRef.current.close() } catch(_){} ; pcRef.current = null }
+    // Callee nevytváří PC zde — PC vytvoří až v onOffer po příchodu nabídky
+    // Jen vyčisti ICE frontu
     iceCandidateQueueRef.current = []
     try {
       const k = callKindRef.current || callState.kind || 'audio'
